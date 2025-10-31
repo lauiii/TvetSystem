@@ -1,0 +1,43 @@
+<?php
+/**
+ * Local configuration overrides for mailer and DB.
+ *
+ * Copy this file to config.local.php and fill in your own values.
+ * Do NOT commit config.local.php to version control.
+ */
+
+// Site overrides (optional)
+// define('SITE_NAME', 'College Grading System');
+// define('SITE_URL', 'http://localhost/tvetsystem');
+
+// SMTP (PHPMailer)
+// For Gmail, create an App Password (requires 2FA), then set:
+// - SMTP_HOST: smtp.gmail.com
+// - SMTP_PORT: 587 (TLS) or 465 (SSL)
+// - SMTP_SECURE: 'tls' or 'ssl'
+// - SMTP_USER: your full email address
+// - SMTP_PASS: your app password
+// - SMTP_FROM: usually same as SMTP_USER
+// - SMTP_FROM_NAME: display name for from address
+// - SMTP_DEBUG: 0 (off) to 4 (max)
+
+define('SMTP_HOST', 'smtp.gmail.com');
+define('SMTP_PORT', 587);
+define('SMTP_SECURE', 'tls');
+
+define('SMTP_USER', 'ascbtvet@gmail.com');
+define('SMTP_PASS', 'tftj vkve caqu iyqk');
+
+define('SMTP_FROM', 'you@example.com');
+define('SMTP_FROM_NAME', 'College Grading System');
+
+define('SMTP_DEBUG', 0);
+
+// Optional: disable TLS peer verification if you hit local CA issues (not recommended)
+// putenv('SMTP_VERIFY_PEER=0');
+
+// Database (optional overrides)
+// $DB_HOST = '127.0.0.1';
+// $DB_NAME = 'college_grading_system';
+// $DB_USER = 'root';
+// $DB_PASS = '';

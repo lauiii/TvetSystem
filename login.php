@@ -292,7 +292,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         <!-- Footer -->
         <div class="login-footer">
-            © 2024 College Grading System. All rights reserved.
+            © 2024 <?php echo htmlspecialchars(SITE_NAME); ?>. All rights reserved.
+            <div style="margin-top:8px;">
+                <a href="forgot.php" style="color:#fff; text-decoration:underline;">Forgot your password?</a>
+            </div>
         </div>
     </div>
 </body>

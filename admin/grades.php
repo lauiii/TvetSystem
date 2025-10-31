@@ -77,12 +77,22 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     if (empty($finals)) { echo '<div style="padding:16px; color:#666;">No grades found for the active term.</div>'; exit; }
 
     // Modal header
+    $semRaw = strtolower((string)($activeSY['semester'] ?? ''));
+    $semLabel = 'Semester';
+    if ($semRaw === '1' || $semRaw === 'first' || $semRaw === '1st') { $semLabel = '1st Semester'; }
+    elseif ($semRaw === '2' || $semRaw === 'second' || $semRaw === '2nd') { $semLabel = 'Second Semester'; }
+    elseif ($semRaw === '3' || $semRaw === 'summer' ) { $semLabel = 'Summer'; }
+
+    $yearNum = intval($s['year_level'] ?? 0);
+    $yrLabel = $yearNum ? ($yearNum===1 ? '1st Year' : ($yearNum===2 ? '2nd Year' : ($yearNum===3 ? '3rd Year' : ($yearNum===4 ? '4th Year' : ('Year ' . $yearNum))))) : '';
+
     echo '<div style="padding:6px 0 12px; font-family:system-ui,Segoe UI,Arial;">';
     echo '<div style="font-size:20px; font-weight:700; margin-bottom:6px;">Student Info</div>';
     echo '<div style="margin:4px 0;"><strong>Name:</strong> ' . htmlspecialchars($fullname) . '</div>';
     echo '<div style="margin:4px 0;"><strong>Student #:</strong> ' . htmlspecialchars($s['student_id'] ?? '') . '</div>';
-    echo '<div style="margin:4px 0;"><strong>Year & Program:</strong> ' . htmlspecialchars(($s['year_level'] ? 'Year ' . $s['year_level'] : '')) . (isset($s['program_name']) ? ' – ' . htmlspecialchars($s['program_name']) : '') . '</div>';
-    echo '<div style="margin:4px 0;"><strong>Semester:</strong> ' . htmlspecialchars('Semester ' . ($activeSY['semester'] ?? '')) . '</div>';
+    echo '<div style="margin:4px 0;"><strong>Year Level:</strong> ' . htmlspecialchars($yrLabel) . '</div>';
+    echo '<div style="margin:4px 0;"><strong>Program:</strong> ' . htmlspecialchars($s['program_name'] ?? '') . '</div>';
+    echo '<div style="margin:4px 0;"><strong>Semester:</strong> ' . htmlspecialchars($semLabel) . '</div>';
     echo '<div style="margin:4px 0;"><strong>School Year:</strong> ' . htmlspecialchars($activeSY['year'] ?? '') . '</div>';
     echo '</div>';
 
@@ -175,6 +185,8 @@ $query = "
         c.id as course_id,
         c.course_code,
         c.course_name,
+        c.program_id,
+        p.name as program_name,
         ROUND(AVG(g.grade),2) as average_raw
     FROM grades g
     INNER JOIN enrollments e ON g.enrollment_id = e.id
@@ -182,6 +194,7 @@ $query = "
     INNER JOIN assessment_items ai ON g.assessment_id = ai.id
     INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
     INNER JOIN courses c ON ac.course_id = c.id
+    LEFT JOIN programs p ON c.program_id = p.id
     WHERE g.grade IS NOT NULL
 ";
 
@@ -196,6 +209,21 @@ $query .= " GROUP BY u_student.id, c.id ORDER BY " . (in_array('last_name', $use
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $studentCourseAverages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Group rows by program, then unique students per program with a count indicator
+$programGroups = [];
+foreach ($studentCourseAverages as $r) {
+    $pid = isset($r['program_id']) ? (int)$r['program_id'] : 0;
+    $pname = $r['program_name'] ?? 'Unassigned Program';
+    if (!isset($programGroups[$pid])) {
+        $programGroups[$pid] = ['name' => $pname, 'students' => []];
+    }
+    $sid = (int)$r['student_id'];
+    if (!isset($programGroups[$pid]['students'][$sid])) {
+        $programGroups[$pid]['students'][$sid] = ['row' => $r, 'count' => 0];
+    }
+    $programGroups[$pid]['students'][$sid]['count']++;
+}
 
 ?>
 <!doctype html>
@@ -277,51 +305,43 @@ $studentCourseAverages = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <p>No grade summaries found matching the criteria.</p>
                     <?php else: ?>
                         <div class="table-responsive">
-                            <table class="grades-table">
-                                <thead>
-                                    <tr>
-                                        <th>Student</th>
-                                        <th>Course / Subject</th>
-                                        <th>Average Grade (LEE)</th>
-                                        <th>Remarks</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($studentCourseAverages as $row): ?>
+                            <?php foreach ($programGroups as $pg): ?>
+                                <h4 style="margin:10px 0; font-weight:700;">
+                                    <?php echo htmlspecialchars($pg['name']); ?>
+                                </h4>
+                                <table class="grades-table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong>
-                                                <?php
-                                                if (isset($row['student_first']) && isset($row['student_last'])) {
-                                                    echo htmlspecialchars($row['student_last'] . ', ' . $row['student_first']);
-                                                } elseif (isset($row['student_name'])) {
-                                                    echo htmlspecialchars($row['student_name']);
-                                                } else {
-                                                    echo htmlspecialchars($row['student_number']);
-                                                }
-                                                ?>
-                                                </strong>
-                                            </td>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($row['course_code']); ?></strong><br>
-                                                <small><?php echo htmlspecialchars($row['course_name']); ?></small>
-                                            </td>
-                                            <?php
-                                                $lee = null;
-                                                if ($row['average_raw'] !== null) { $lee = lee_from_percent(floatval($row['average_raw'])); }
-                                                list($remarks, $cls) = lee_remarks($lee);
-                                            ?>
-                                            <td><?php echo $lee !== null ? number_format($lee,2) : '<em>-</em>'; ?></td>
-                                            <td><span class="<?php echo $cls; ?>"><?php echo htmlspecialchars($remarks); ?></span></td>
-                                            <td>
-                                                <button class="btn btn-violet" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">🟣 View Grades</button>
-                                                <a class="btn btn-green" href="print_grades.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank">🟢 Print Grades</a>
-                                            </td>
+                                            <th>Student</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($pg['students'] as $sid => $info): $row = $info['row']; ?>
+                                            <tr>
+                                                <td>
+                                                    <strong>
+                                                    <?php
+                                                    if (isset($row['student_first']) && isset($row['student_last'])) {
+                                                        echo htmlspecialchars($row['student_last'] . ', ' . $row['student_first']);
+                                                    } elseif (isset($row['student_name'])) {
+                                                        echo htmlspecialchars($row['student_name']);
+                                                    } else {
+                                                        echo htmlspecialchars($row['student_number']);
+                                                    }
+                                                    ?>
+                                                    </strong>
+                                                </td>
+                                                <td>
+                                                <button class="btn btn-violet" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">🟣 View Grades</button>
+                                                <a class="btn btn-green" href="print_grades_pdf.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank">🟢 Print Grades</a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                                <div style="height:12px"></div>
+                            <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
                 </div>

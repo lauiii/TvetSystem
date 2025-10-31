@@ -8,6 +8,7 @@
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\SMTP;
 
 // Load Composer's autoloader (adjust path as needed). Try common paths.
 if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
@@ -19,21 +20,55 @@ if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
 // Define email helpers: use PHPMailer if available, otherwise provide lightweight fallbacks.
 if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
 
+    function mailerConfiguredOrThrow() {
+        $missing = [];
+        if (empty(SMTP_HOST)) $missing[] = 'SMTP_HOST';
+        if (empty(SMTP_PORT)) $missing[] = 'SMTP_PORT';
+        if (empty(SMTP_USER)) $missing[] = 'SMTP_USER';
+        if (empty(SMTP_PASS)) $missing[] = 'SMTP_PASS';
+        if (empty(SMTP_FROM)) $missing[] = 'SMTP_FROM';
+        if ($missing) {
+            throw new Exception('Mailer not configured. Missing: ' . implode(', ', $missing));
+        }
+    }
+
+    function configureSMTP(PHPMailer $mail) {
+        $mail->isSMTP();
+        $mail->Host = SMTP_HOST;
+        $mail->SMTPAuth = true;
+        $mail->Username = SMTP_USER;
+        $mail->Password = SMTP_PASS;
+        $secure = strtolower(SMTP_SECURE);
+        if ($secure === 'ssl' || $secure === 'smtps') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+            if (empty(SMTP_PORT)) $mail->Port = 465; else $mail->Port = SMTP_PORT;
+        } else {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port = SMTP_PORT ?: 587;
+        }
+        $mail->SMTPDebug = SMTP_DEBUG; // 0-4
+        $mail->CharSet = 'UTF-8';
+        // Optional: relax peer verification if needed (set SMTP_VERIFY_PEER=0)
+        $verifyPeer = getenv('SMTP_VERIFY_PEER');
+        if ($verifyPeer !== false && (int)$verifyPeer === 0) {
+            $mail->SMTPOptions = [
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true,
+                ],
+            ];
+        }
+    }
+
     /**
      * Send student login credentials via PHPMailer
      */
     function sendStudentCredentials($email, $firstName, $studentID, $password) {
         try {
+            mailerConfiguredOrThrow();
             $mail = new PHPMailer(true);
-
-            // Server settings
-            $mail->isSMTP();
-            $mail->Host = SMTP_HOST;
-            $mail->SMTPAuth = true;
-            $mail->Username = SMTP_USER;
-            $mail->Password = SMTP_PASS;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = SMTP_PORT;
+            configureSMTP($mail);
 
             // Recipients
             $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
@@ -68,23 +103,31 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
     /**
      * Send generic notification via PHPMailer
      */
+    function renderEmailTemplate($title, $contentHtml) {
+        $school = htmlspecialchars(SITE_NAME);
+        $titleEsc = htmlspecialchars($title);
+        return '<!doctype html><html><head><meta charset="utf-8">'
+            . '<style>body{font-family:system-ui,Segoe UI,Arial;color:#222;background:#f8fafc;padding:0;margin:0}'
+            . '.wrap{max-width:680px;margin:20px auto;background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden;box-shadow:0 6px 16px rgba(0,0,0,0.06)}'
+            . '.hdr{background:#6a0dad;color:#fff;padding:14px 18px;font-weight:700;letter-spacing:.02em}'
+            . '.inner{padding:18px} h2{margin:0 0 12px;color:#6a0dad} p{margin:8px 0}</style>'
+            . '</head><body><div class="wrap"><div class="hdr">' . $school . '</div>'
+            . '<div class="inner"><h2>' . $titleEsc . '</h2>' . $contentHtml . '</div>'
+            . '</div></body></html>';
+    }
+
     function sendNotificationEmail($email, $firstName, $subject, $message) {
         try {
+            mailerConfiguredOrThrow();
             $mail = new PHPMailer(true);
-            $mail->isSMTP();
-            $mail->Host = SMTP_HOST;
-            $mail->SMTPAuth = true;
-            $mail->Username = SMTP_USER;
-            $mail->Password = SMTP_PASS;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = SMTP_PORT;
+            configureSMTP($mail);
 
             $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
             $mail->addAddress($email, $firstName);
 
             $mail->isHTML(true);
             $mail->Subject = $subject;
-            $mail->Body = "<html><body><h2>" . htmlspecialchars($subject) . "</h2>" . $message . "</body></html>";
+            $mail->Body = renderEmailTemplate($subject, $message);
             $mail->AltBody = strip_tags($message);
 
             $mail->send();
@@ -100,14 +143,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
      */
     function sendEmailWithAttachment($email, $firstName, $subject, $html, $attachmentName, $attachmentContent, $mime = 'text/csv') {
         try {
+            mailerConfiguredOrThrow();
             $mail = new PHPMailer(true);
-            $mail->isSMTP();
-            $mail->Host = SMTP_HOST;
-            $mail->SMTPAuth = true;
-            $mail->Username = SMTP_USER;
-            $mail->Password = SMTP_PASS;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = SMTP_PORT;
+            configureSMTP($mail);
 
             $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
             $mail->addAddress($email, $firstName);

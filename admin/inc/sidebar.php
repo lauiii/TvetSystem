@@ -17,7 +17,6 @@ if (!isset($active)) $active = '';
         <a href="courses.php" class="menu-item <?php echo $active === 'courses' ? 'active' : '' ?>">📖 Courses</a>
         <a href="school-years.php" class="menu-item <?php echo $active === 'school-years' ? 'active' : '' ?>">📅 School Years</a>
         <a href="grades.php" class="menu-item <?php echo $active === 'grades' ? 'active' : '' ?>">📝 Grades</a>
-        <a href="flags.php" class="menu-item <?php echo $active === 'flags' ? 'active' : '' ?>">🚩 Flags</a>
         <a href="reports.php" class="menu-item <?php echo $active === 'reports' ? 'active' : '' ?>">📊 Reports</a>
     </nav>
 </aside>

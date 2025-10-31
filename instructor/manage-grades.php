@@ -168,6 +168,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
         $payload = $_POST['grades'];
     }
     $result = processGrades($pdo, $payload);
+
+    // Notify admin on submission
+    try {
+        require_once __DIR__ . '/../include/email-functions.php';
+        $course = ($section['course_code'] ?? '') . ' — ' . ($section['course_name'] ?? '');
+        $sec = $section['section_code'] ?? '';
+        // Resolve instructor name from session or DB
+        $instrName = isset($_SESSION['name']) && $_SESSION['name'] ? $_SESSION['name'] : '';
+        if ($instrName === '') {
+            try {
+                $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+                $nm = '';
+                if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
+                    $st = $pdo->prepare("SELECT CONCAT(first_name,' ',last_name) AS nm FROM users WHERE id = ? LIMIT 1");
+                    $st->execute([$instructorId]);
+                    $nm = $st->fetchColumn();
+                } elseif (in_array('name', $ucols)) {
+                    $st = $pdo->prepare("SELECT name AS nm FROM users WHERE id = ? LIMIT 1");
+                    $st->execute([$instructorId]);
+                    $nm = $st->fetchColumn();
+                }
+                if ($nm) { $instrName = $nm; }
+            } catch (Exception $ee) { /* ignore */ }
+        }
+        $subject = 'Grades Submitted — ' . $course . ' (Section ' . $sec . ')';
+        $body = '<p>Grades have been submitted.</p>'
+              . '<p><strong>Course:</strong> ' . htmlspecialchars($course) . '<br>'
+              . '<strong>Section:</strong> ' . htmlspecialchars($sec) . '<br>'
+              . '<strong>Instructor:</strong> ' . htmlspecialchars($instrName ?: 'Unknown') . '<br>'
+              . '<strong>When:</strong> ' . date('Y-m-d H:i:s') . '</p>'
+              . '<p>You can review in the system.</p>';
+        @sendNotificationEmail('ascbtvet@gmail.com', 'Admin', $subject, $body);
+    } catch (Exception $e) { /* ignore email errors */ }
+
     if ($isAjax) {
         // attach assessment averages to AJAX response for client refresh
         // compute updated averages

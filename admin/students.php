@@ -9,6 +9,11 @@ requireRole('admin');
 // basic search
 $q = trim($_GET['q'] ?? '');
 
+// school years for filtering
+$schoolYears = $pdo->query("SELECT id, year, status FROM school_years ORDER BY year DESC")->fetchAll(PDO::FETCH_ASSOC);
+$activeSY = null; foreach ($schoolYears as $sy) { if (($sy['status'] ?? '') === 'active') { $activeSY = $sy; break; } }
+$syId = isset($_GET['sy_id']) ? (int)$_GET['sy_id'] : (int)($activeSY['id'] ?? 0);
+
 // Determine available user columns to build a safe SELECT and WHERE
 $userCols = [];
 try {
@@ -37,9 +42,11 @@ $selectParts[] = "p.name AS program_name";
 
 $select = implode(', ', $selectParts);
 
-$sql = "SELECT $select FROM users u LEFT JOIN programs p ON u.program_id = p.id WHERE u.role = 'student'";
+$sql = "SELECT $select FROM users u 
+LEFT JOIN programs p ON u.program_id = p.id
+INNER JOIN enrollments e ON e.student_id = u.id AND e.school_year_id = :syid";
 
-$params = [];
+$params = [':syid' => $syId];
 if ($q !== '') {
     // Build WHERE parts depending on which columns exist
     $whereParts = [];
@@ -54,7 +61,7 @@ if ($q !== '') {
     }
 }
 
-$sql .= " ORDER BY u.id DESC LIMIT 200";
+$sql .= " WHERE u.role = 'student' ORDER BY u.id DESC LIMIT 200";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -77,13 +84,27 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="container">
                 <?php $pageTitle = 'Students'; require __DIR__ . '/inc/header.php'; ?>
                 <div class="card">
-                    <div class="toolbar">
-                        <form method="GET" style="flex:1;">
-                            <input class="search-input" name="q" placeholder="Search by name, email or student ID" value="<?php echo htmlspecialchars($q); ?>">
-                            <button class="btn primary" style="margin-left:8px;">Search</button>
-                        </form>
-                        <a class="btn" href="download-template.php?raw=1">Download Template</a>
-                    </div>
+<div class="toolbar" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+    <form method="GET" style="display:flex; gap:8px; align-items:end; flex:1;">
+        <div>
+            <label style="display:block; font-size:12px; color:#555;">School Year</label>
+            <select name="sy_id" onchange="this.form.submit()">
+                <?php foreach ($schoolYears as $sy): ?>
+                    <option value="<?php echo (int)$sy['id']; ?>" <?php echo ((int)$sy['id'] === (int)$syId) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sy['year'] . (($sy['status'] ?? '')==='active' ? ' (Active)' : '')); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div style="flex:1;">
+            <label style="display:block; font-size:12px; color:#555;">Search</label>
+            <div style="display:flex;">
+                <input class="search-input" name="q" placeholder="Search by name, email or student ID" value="<?php echo htmlspecialchars($q); ?>" style="flex:1;">
+                <button class="btn primary" style="margin-left:8px;">Search</button>
+            </div>
+        </div>
+    </form>
+    <a class="btn" href="resend_passwords.php">Resend Passwords</a>
+    <a class="btn" href="download-template.php?raw=1">Download Template</a>
+</div>
 
                     <div class="table-responsive">
                         <table class="report-table">

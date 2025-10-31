@@ -310,6 +310,7 @@ $pendingFlags = $stmt->fetch()['count'];
             <div class="stat-card">
                 <h3>Pending Flags</h3>
                 <div class="number"><?php echo $pendingFlags; ?></div>
+                <div style="margin-top:10px"><a class="btn btn-secondary" href="flags.php">Manage Flags</a></div>
             </div>
         </div>
         

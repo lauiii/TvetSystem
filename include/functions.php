@@ -163,6 +163,15 @@ function create_user(PDO $pdo, $firstName, $lastName, $email, $program_id = null
             $enrollment = auto_enroll_student($pdo, $user_id, $program_id, $year_level);
             $enrolled = $enrollment['enrolled'] ?? 0;
         }
+        // Attempt to send credentials via email if email column was used
+        try {
+            if (!empty($email) && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                require_once __DIR__ . '/email-functions.php';
+                if (function_exists('sendStudentCredentials')) {
+                    @sendStudentCredentials($email, $firstName, $studentID, $passwordPlain);
+                }
+            }
+        } catch (Exception $e) { /* ignore mail failures */ }
         return ['success' => true, 'id' => $user_id, 'student_id' => $studentID, 'password' => $passwordPlain, 'enrolled' => $enrolled];
     }
 
