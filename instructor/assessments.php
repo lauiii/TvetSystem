@@ -42,9 +42,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         // Define period limits
         $periodLimits = [
+            'prelim' => 100,
+            'midterm' => 100,
+            'finals' => 100
+        ];
+        // Base weights for computing effective contribution
+        $periodWeights = [
             'prelim' => 30,
             'midterm' => 30,
-            'finals' => 40
+            'finals' => 40,
+            'final' => 40
+        ];
+        // Base weights for computing effective contribution
+        $periodWeights = [
+            'prelim' => 30,
+            'midterm' => 30,
+            'finals' => 40,
+            'final' => 40
         ];
 
         // Check total percentage for the specific period
@@ -67,8 +81,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             $pdo->rollBack();
                             $error = 'A criteria with that name already exists for this course and period.';
                         } else {
-                            $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)');
-                            $stmt->execute([$course_id, $name, $period, $percentage]);
+                            // compute effective percentage (within-period × period weight)
+                            $pkey = strtolower($period) === 'finals' ? 'final' : strtolower($period);
+                            $pweight = $periodWeights[$pkey] ?? 0;
+                            $effective = ($pweight > 0) ? (($percentage / 100.0) * $pweight) : 0;
+                            try {
+                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?)');
+                                $stmt->execute([$course_id, $name, $period, $percentage, $effective]);
+                            } catch (Exception $e) {
+                                // fallback if column not yet added
+                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)');
+                                $stmt->execute([$course_id, $name, $period, $percentage]);
+                            }
                             $pdo->commit();
                             $msg = 'Assessment criteria added successfully.';
                         }
@@ -146,9 +170,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         // Define period limits
         $periodLimits = [
-            'prelim' => 30,
-            'midterm' => 30,
-            'finals' => 40
+            'prelim' => 100,
+            'midterm' => 100,
+            'finals' => 100
         ];
 
         // Check total percentage for the specific period excluding current criteria
@@ -162,8 +186,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $error = 'Total criteria percentage for ' . ucfirst($period) . ' cannot exceed ' . $periodLimits[$period] . '%. Current total (excluding this criteria): ' . $currentPeriodTotal . '%.';
         } else {
             try {
-                $stmt = $pdo->prepare('UPDATE assessment_criteria SET name = ?, period = ?, percentage = ? WHERE id = ?');
-                $stmt->execute([$name, $period, $percentage, $id]);
+                $pkey = strtolower($period) === 'finals' ? 'final' : strtolower($period);
+                $pweight = $periodWeights[$pkey] ?? 0;
+                $effective = ($pweight > 0) ? (($percentage / 100.0) * $pweight) : 0;
+                try {
+                    $stmt = $pdo->prepare('UPDATE assessment_criteria SET name = ?, period = ?, percentage = ?, effective_percentage = ? WHERE id = ?');
+                    $stmt->execute([$name, $period, $percentage, $effective, $id]);
+                } catch (Exception $e) {
+                    // fallback if column not yet added
+                    $stmt = $pdo->prepare('UPDATE assessment_criteria SET name = ?, period = ?, percentage = ? WHERE id = ?');
+                    $stmt->execute([$name, $period, $percentage, $id]);
+                }
                 $msg = 'Assessment criteria updated successfully.';
             } catch (Exception $e) {
                 $error = 'Failed to update criteria: ' . $e->getMessage();
@@ -447,6 +480,16 @@ if ($courseId > 0) {
             background: #f8f9fa;
         }
 
+        /* Remaining percentage styling under period line */
+        .remaining-text {
+            display: block;
+            color: #8B5CF6; /* violet to fit theme */
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-top: 4px;
+            text-align: left;
+        }
+
         .actions {
             display: flex;
             gap: 5px;
@@ -502,6 +545,9 @@ if ($courseId > 0) {
         <div class="page-header">
             <h1>Manage Assessments</h1>
             <p>Create and manage assessments for your courses</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:10px;">
+                <a href="manage-grades.php" class="btn btn-primary">🧮 Manage Grades</a>
+            </div>
         </div>
 
         <?php if ($error): ?>
@@ -572,6 +618,14 @@ if ($courseId > 0) {
                     $periodTotals[$criterion['period']] += $criterion['percentage'];
                 }
                 $periodLimits = ['prelim' => 30, 'midterm' => 30, 'finals' => 40];
+                // Base weights for each period used to compute overall contribution
+                $periodWeights = [
+                    'prelim' => 30,
+                    'midterm' => 30,
+                    // normalize 'finals' -> use key 'final' while supporting existing 'finals' value from DB
+                    'final' => 40,
+                    'finals' => 40
+                ];
                 ?>
 
                 <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;">
@@ -579,29 +633,28 @@ if ($courseId > 0) {
                         <strong>Period Breakdown:</strong>
                     </div>
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <?php $periodWeightLabels = ['prelim'=>30,'midterm'=>30,'finals'=>40]; ?>
                         <?php foreach ($periodTotals as $period => $total): ?>
+                            <?php
+                                $labelWeight = $periodWeightLabels[$period] ?? 0;
+                                $within = max(0, min(100, $total));
+                            ?>
                             <div style="flex: 1; min-width: 150px;">
-                                <strong><?php echo ucfirst($period); ?>: <?php echo $total; ?>/<?php echo $periodLimits[$period]; ?>%</strong>
-                                <?php if ($total > $periodLimits[$period]): ?>
-                                    <span style="color: #dc3545; margin-left: 5px;">(Exceeds limit)</span>
-                                <?php elseif ($total < $periodLimits[$period]): ?>
-                                    <span style="color: #ffc107; margin-left: 5px;">(<?php echo $periodLimits[$period] - $total; ?>% remaining)</span>
+                                <strong><?php echo ucfirst($period); ?>: <?php echo number_format($within, 0); ?>/100% <span style="color:#6c757d;">(<?php echo number_format($labelWeight, 0); ?>% of total grade)</span></strong>
+                                <?php if ($within > 100): ?>
+                                    <span class="remaining-text" style="color:#dc3545;">Exceeds limit</span>
+                                <?php elseif ($within < 100): ?>
+                                    <?php $remaining = number_format(100 - $within, 0); ?>
+                                    <span class="remaining-text"><?php echo $remaining; ?>% remaining</span>
                                 <?php else: ?>
-                                    <span style="color: #28a745; margin-left: 5px;">(Perfect)</span>
+                                    <span class="remaining-text" style="color:#28a745;">Perfect</span>
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     </div>
                     <hr style="margin: 10px 0;">
                     <div>
-                        <strong>Total Assessment Percentage: <?php echo $totalPercentage; ?>%</strong>
-                        <?php if ($totalPercentage > 100): ?>
-                            <span style="color: #dc3545; margin-left: 10px;">(Exceeds 100% - please adjust percentages)</span>
-                        <?php elseif ($totalPercentage < 100): ?>
-                            <span style="color: #ffc107; margin-left: 10px;">(Below 100% - <?php echo 100 - $totalPercentage; ?>% remaining)</span>
-                        <?php else: ?>
-                            <span style="color: #28a745; margin-left: 10px;">(Perfect - exactly 100%)</span>
-                        <?php endif; ?>
+                        <strong>Total Assessment Percentage: <?php echo number_format($totalPercentage, 0); ?>% <span style="color:#6c757d;">(sum across periods)</span></strong>
                     </div>
                 </div>
 
@@ -624,7 +677,10 @@ if ($courseId > 0) {
                                         <td style="font-weight: 600; color: #6a0dad;">Criteria</td>
                                         <td style="font-weight: 600; color: #6a0dad;"><?php echo htmlspecialchars($criterion['name']); ?></td>
                                         <td><?php echo htmlspecialchars(ucfirst($criterion['period'])); ?></td>
-                                        <td><?php echo htmlspecialchars($criterion['percentage']); ?>%</td>
+                                        <td>
+                                            <?php echo htmlspecialchars($criterion['percentage']); ?>%
+                                            <small class="text-muted">(of this period)</small>
+                                        </td>
                                         <td>
                                             <div class="actions">
                                                 <button class="btn btn-secondary btn-sm" onclick="openEditCriteriaModal(<?php echo $criterion['id']; ?>, '<?php echo htmlspecialchars($criterion['name']); ?>', '<?php echo htmlspecialchars($criterion['period']); ?>', <?php echo $criterion['percentage']; ?>)">Edit</button>

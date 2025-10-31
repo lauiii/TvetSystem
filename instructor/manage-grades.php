@@ -287,7 +287,10 @@ $hasAssessments = count($displayAssessments) > 0;
                 <h1>Manage Grades</h1>
                 <div class="meta"><?php echo htmlspecialchars($section['course_code'] . ' — ' . $section['course_name']); ?> &middot; Section <?php echo htmlspecialchars($section['section_code']); ?></div>
             </div>
-            <div class="meta small">Instructor dashboard</div>
+            <div class="meta small" style="display:flex; gap:8px; align-items:center;">
+                <a href="dashboard.php" class="btn btn-primary" title="Go to Dashboard">🏠 Manage Grades</a>
+                <a href="assessments.php?course_id=<?php echo (int)$section['course_id']; ?>" class="btn btn-secondary" title="Manage Assessment">🧮 Assessments</a>
+            </div>
         </header>
 
         <?php if ($success): ?><div class="notice success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
@@ -312,7 +315,7 @@ $hasAssessments = count($displayAssessments) > 0;
                                     <th rowspan="3">Student</th>
                                     <?php if ($hasAssessments): ?>
                                         <?php foreach ($grouped as $pname => $pdata): ?>
-                                            <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars($pname); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
+                                            <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars(ucfirst($pname)); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
                                     <th rowspan="3">Tentative (%)</th>

@@ -104,6 +104,7 @@ try {
         name VARCHAR(100) NOT NULL,
         period ENUM('prelim','midterm','finals') NOT NULL,
         percentage DECIMAL(5,2) NOT NULL,
+        effective_percentage DECIMAL(6,2) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -119,6 +120,19 @@ try {
 
     // Add total_score column if not exists (for existing tables)
     $pdo->exec("ALTER TABLE assessment_items ADD COLUMN IF NOT EXISTS total_score DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER name");
+
+    // Add effective_percentage column to assessment_criteria if missing
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN IF NOT EXISTS effective_percentage DECIMAL(6,2) NULL AFTER percentage"); } catch(Exception $e) {}
+
+    // Backfill effective_percentage for existing rows based on period weights
+    try {
+        // Create a temp mapping table for weights
+        $weights = [ 'prelim' => 30, 'midterm' => 30, 'finals' => 40 ];
+        foreach ($weights as $key => $val) {
+            $stmt = $pdo->prepare("UPDATE assessment_criteria SET effective_percentage = ROUND((percentage/100.0) * ?, 2) WHERE period = ?");
+            $stmt->execute([$val, $key]);
+        }
+    } catch(Exception $e) {}
 
     // Update grades table foreign key to reference assessment_items
     try {
