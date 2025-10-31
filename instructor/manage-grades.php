@@ -1,26 +1,28 @@
 <?php
 /**
- * Grade Management Page for Instructors
- * Submit and manage student grades
+ * Modern Manage Grades page for Instructors
+ * - AJAX submission with JSON responses
+ * - Accepts 0 as valid grade
+ * - Inline validation and live totals
  */
 
 require_once '../config.php';
 requireRole('instructor');
 
-$instructorId = $_SESSION['user_id'];
-$sectionId = intval($_GET['section_id'] ?? 0);
+$instructorId = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 0;
+$sectionId = intval(isset($_GET['section_id']) ? $_GET['section_id'] : 0);
 $success = '';
 $error = '';
 
-// Verify instructor has access to this section
-$stmt = $pdo->prepare("
-    SELECT s.*, c.id as course_id, c.course_code, c.course_name, c.year_level, c.semester, p.name as program_name
+// Verify instructor access
+$stmt = $pdo->prepare(
+    "SELECT s.*, c.id as course_id, c.course_code, c.course_name, c.year_level, c.semester, p.name as program_name, s.section_code
     FROM sections s
     INNER JOIN courses c ON s.course_id = c.id
     INNER JOIN programs p ON c.program_id = p.id
     INNER JOIN instructor_sections ins ON s.id = ins.section_id
-    WHERE s.id = ? AND ins.instructor_id = ? AND s.status = 'active'
-");
+    WHERE s.id = ? AND ins.instructor_id = ? AND s.status = 'active'"
+);
 $stmt->execute([$sectionId, $instructorId]);
 $section = $stmt->fetch();
 
@@ -29,70 +31,126 @@ if (!$section) {
     exit;
 }
 
-// Handle grade submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
+// Helper to process grades and return array with success/error
+function processGrades($pdo, $gradesPayload)
+{
     try {
         $pdo->beginTransaction();
-        
-        foreach ($_POST['grades'] as $enrollmentId => $assessments) {
-            foreach ($assessments as $assessmentId => $gradeData) {
-                $grade = !empty($gradeData['grade']) ? floatval($gradeData['grade']) : null;
-                $status = !empty($gradeData['grade']) ? 'complete' : 'incomplete';
+        // Validate assessment IDs and enrollment IDs belong to this course before inserting
+        // Fetch valid assessment ids for the course
+        $validAssessmentStmt = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)");
+        // Use global $section to get course_id
+        global $section;
+        $validAssessmentStmt->execute([$section['course_id']]);
+        $validAssessments = array_column($validAssessmentStmt->fetchAll(), 'id');
+        $validAssessmentsMap = array_flip($validAssessments);
 
-                // Insert or update grade
-                $stmt = $pdo->prepare("
-                    INSERT INTO grades (enrollment_id, assessment_id, grade, status, submitted_at)
-                    VALUES (?, ?, ?, ?, NOW())
-                    ON DUPLICATE KEY UPDATE
-                        grade = VALUES(grade),
-                        status = VALUES(status),
-                        submitted_at = NOW()
-                ");
-                $stmt->execute([$enrollmentId, $assessmentId, $grade, $status]);
+        // Fetch valid enrollment ids for this course
+        $validEnrollStmt = $pdo->prepare("SELECT id FROM enrollments WHERE course_id = ? AND status = 'enrolled'");
+        $validEnrollStmt->execute([$section['course_id']]);
+        $validEnrolls = array_column($validEnrollStmt->fetchAll(), 'id');
+        $validEnrollsMap = array_flip($validEnrolls);
+
+        if (!empty($gradesPayload) && is_array($gradesPayload)) {
+            $insertStmt = $pdo->prepare(
+                "INSERT INTO grades (enrollment_id, assessment_id, grade, status, submitted_at)
+                VALUES (?, ?, ?, ?, NOW())
+                ON DUPLICATE KEY UPDATE
+                    grade = VALUES(grade),
+                    status = VALUES(status),
+                    submitted_at = NOW()"
+            );
+
+            $invalid = [];
+            foreach ($gradesPayload as $enrollmentId => $assessments) {
+                // ensure enrollment belongs to course
+                if (!isset($validEnrollsMap[$enrollmentId])) {
+                    $invalid[] = "enrollment:{$enrollmentId}";
+                    continue;
+                }
+
+                foreach ($assessments as $assessmentId => $gradeData) {
+                    if (!isset($validAssessmentsMap[$assessmentId])) {
+                        $invalid[] = "assessment:{$assessmentId}";
+                        continue;
+                    }
+
+                    $gradeRaw = isset($gradeData['grade']) ? trim((string)$gradeData['grade']) : '';
+                    if ($gradeRaw !== '') {
+                        if (!is_numeric($gradeRaw)) {
+                            throw new Exception("Invalid grade for enrollment {$enrollmentId}, assessment {$assessmentId}");
+                        }
+                        $grade = floatval($gradeRaw);
+                        $status = 'complete';
+                    } else {
+                        $grade = null;
+                        $status = 'incomplete';
+                    }
+
+                    $insertStmt->execute([$enrollmentId, $assessmentId, $grade, $status]);
+                }
+            }
+
+            if (!empty($invalid)) {
+                throw new Exception('Invalid IDs in payload: ' . implode(', ', array_unique($invalid)));
             }
         }
-        
+
         $pdo->commit();
-        $success = 'Grades submitted successfully!';
-        
+        return ['success' => true, 'message' => 'Grades saved.'];
     } catch (Exception $e) {
         $pdo->rollBack();
-        $error = 'Failed to submit grades: ' . $e->getMessage();
+        // Log the failure for debugging
+        $logMsg = date('c') . " | Failed to process grades: " . $e->getMessage() . "\nPayload: " . json_encode($gradesPayload) . "\n";
+        @file_put_contents(__DIR__ . '/../logs/grades_errors.log', $logMsg, FILE_APPEND);
+        return ['success' => false, 'message' => $e->getMessage()];
+    }
+}
+
+// Detect AJAX (fetch) requests
+$isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') || isset($_POST['ajax']);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
+    $result = processGrades($pdo, isset($_POST['grades']) ? $_POST['grades'] : []);
+    if ($isAjax) {
+        // attach assessment averages to AJAX response for client refresh
+        // compute updated averages
+        $avgStmt = $pdo->prepare("SELECT assessment_id, AVG(grade) as avg_grade FROM grades WHERE assessment_id IN (SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)) GROUP BY assessment_id");
+        $avgStmt->execute([$section['course_id']]);
+        $avgs = [];
+        foreach ($avgStmt->fetchAll() as $r) { $avgs[$r['assessment_id']] = $r['avg_grade'] !== null ? floatval($r['avg_grade']) : null; }
+        $result['averages'] = $avgs;
+        header('Content-Type: application/json');
+        echo json_encode($result);
+        exit;
+    } else {
+        if ($result['success']) {
+            $success = 'Grades submitted successfully!';
+        } else {
+            $error = 'Failed to submit grades: ' . $result['message'];
+        }
     }
 }
 
 // Fetch assessments for this course
-$stmt = $pdo->prepare("
-    SELECT ai.id, ai.name, ai.total_score, ac.name as criteria_name, ac.period, ac.percentage
+$stmt = $pdo->prepare(
+    "SELECT ai.id, ai.name, ai.total_score, ac.name as criteria_name, ac.period, ac.percentage
     FROM assessment_items ai
     INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
     WHERE ac.course_id = ?
-    ORDER BY ac.period, ac.name, ai.name
-");
+    ORDER BY ac.period, ai.name"
+);
 $stmt->execute([$section['course_id']]);
 $assessments = $stmt->fetchAll();
 
-// Group assessments by criteria for table headers
-$grouped_assessments = [];
-foreach ($assessments as $assessment) {
-    $criteria_name = $assessment['criteria_name'];
-    $grouped_assessments[$criteria_name][] = $assessment;
-}
-
-// Fetch enrolled students with their grades for this section
-$stmt = $pdo->prepare("
-    SELECT
-        e.id as enrollment_id,
-        u.id as student_id,
-        u.student_id as student_number,
-        u.first_name,
-        u.last_name,
-        u.email
+// Fetch enrolled students
+$stmt = $pdo->prepare(
+    "SELECT e.id as enrollment_id, u.id as student_id, u.student_id as student_number, u.first_name, u.last_name, u.email
     FROM enrollments e
     INNER JOIN users u ON e.student_id = u.id
     WHERE e.course_id = ? AND e.status = 'enrolled'
-    ORDER BY u.last_name, u.first_name
-");
+    ORDER BY u.last_name, u.first_name"
+);
 $stmt->execute([$section['course_id']]);
 $students = $stmt->fetchAll();
 
@@ -101,12 +159,8 @@ $grades = [];
 if (count($students) > 0) {
     $enrollmentIds = array_column($students, 'enrollment_id');
     $placeholders = str_repeat('?,', count($enrollmentIds) - 1) . '?';
-    
-    $stmt = $pdo->prepare("
-        SELECT enrollment_id, assessment_id, grade, status
-        FROM grades
-        WHERE enrollment_id IN ($placeholders)
-    ");
+
+    $stmt = $pdo->prepare("SELECT enrollment_id, assessment_id, grade FROM grades WHERE enrollment_id IN ($placeholders)");
     $stmt->execute($enrollmentIds);
 
     foreach ($stmt->fetchAll() as $row) {
@@ -114,325 +168,323 @@ if (count($students) > 0) {
     }
 }
 
+// Compute per-assessment averages for summary (average of non-null grades)
+$assessmentAverages = [];
+if (!empty($grades)) {
+    $counts = [];
+    foreach ($grades as $enrollId => $alist) {
+        foreach ($alist as $aid => $g) {
+            if (!isset($assessmentAverages[$aid])) { $assessmentAverages[$aid] = 0.0; $counts[$aid] = 0; }
+            if ($g['grade'] !== null) { $assessmentAverages[$aid] += floatval($g['grade']); $counts[$aid]++; }
+        }
+    }
+    foreach ($assessmentAverages as $aid => $sum) {
+        $assessmentAverages[$aid] = $counts[$aid] > 0 ? ($sum / $counts[$aid]) : null;
+    }
+}
+
+// Prepare JS-friendly structures
+$assessmentMeta = [];
+$totalPossible = 0.0;
+// Group assessments by period -> criteria -> assessments for header rendering
+$grouped = []; // ['Prelim'=>['criteria'=>['Exam'=>['assessments'=>[...] , 'percentage'=>x]], 'period_percentage'=>sum]]
+$totalPossible = 0.0;
+foreach ($assessments as $a) {
+    $period = $a['period'] ?: 'Unspecified';
+    $criteria = $a['criteria_name'] ?: 'General';
+    $assess = [
+        'id' => (int)$a['id'],
+        'name' => $a['name'],
+        'max' => floatval($a['total_score'])
+    ];
+
+    if (!isset($grouped[$period])) {
+        $grouped[$period] = ['criteria' => [], 'period_percentage' => 0.0, 'possible' => 0.0];
+    }
+
+    // set criteria percentage (only set once if present)
+    if (!isset($grouped[$period]['criteria'][$criteria])) {
+        $grouped[$period]['criteria'][$criteria] = ['assessments' => [], 'percentage' => floatval($a['percentage'])];
+        // accumulate period percentage
+        $grouped[$period]['period_percentage'] += floatval($a['percentage']);
+    }
+
+    $grouped[$period]['criteria'][$criteria]['assessments'][] = $assess;
+    $grouped[$period]['possible'] += $assess['max'];
+    $totalPossible += $assess['max'];
+}
+
+// Flatten assessments in display order (periods -> criteria -> assessments)
+$displayAssessments = [];
+foreach ($grouped as $periodName => $periodData) {
+    foreach ($periodData['criteria'] as $criteriaName => $cdata) {
+        foreach ($cdata['assessments'] as $ass) {
+            $displayAssessments[] = array_merge($ass, ['period' => $periodName, 'criteria' => $criteriaName, 'criteria_percentage' => $cdata['percentage']]);
+        }
+    }
+}
+
+// JS-friendly metadata list
+$assessmentMeta = [];
+$periodMeta = []; // periodName => ['percentage' => x, 'possible' => y]
+foreach ($grouped as $pname => $pdata) {
+    $periodMeta[$pname] = ['percentage' => $pdata['period_percentage'], 'possible' => $pdata['possible']];
+}
+foreach ($displayAssessments as $a) {
+    $assessmentMeta[] = ['id' => (int)$a['id'], 'name' => $a['name'], 'max' => $a['max'], 'period' => $a['period'], 'criteria' => $a['criteria'], 'criteria_percentage' => $a['criteria_percentage']];
+}
+
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Grades - <?php echo htmlspecialchars($section['course_name']); ?> (<?php echo htmlspecialchars($section['section_code']); ?>)</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f5f6fa;
-            color: #333;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 30px;
-        }
-        
-        .page-header {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            margin-bottom: 30px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        }
-        
-        .page-header h1 {
-            color: #6a0dad;
-            margin-bottom: 10px;
-        }
-        
-        .back-link {
-            color: #6a0dad;
-            text-decoration: none;
-            display: inline-block;
-            margin-bottom: 15px;
-        }
-        
-        .alert {
-            padding: 15px 20px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-        }
-        
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left: 4px solid #28a745;
-        }
-        
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border-left: 4px solid #dc3545;
-        }
-        
-        .grades-card {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        }
-        
-        .table-wrapper {
-            overflow-x: auto;
-        }
-        
-        .grades-table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 800px;
-        }
-        
-        .grades-table th {
-            background: #6a0dad;
-            color: white;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        
-        .grades-table td {
-            padding: 12px;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        
-        .grades-table tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .student-info {
-            white-space: nowrap;
-        }
-        
-        .grade-input {
-            width: 80px;
-            padding: 6px;
-            border: 2px solid #e0e0e0;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        
-        .grade-input:focus {
-            outline: none;
-            border-color: #6a0dad;
-        }
-        
-        .status-select {
-            padding: 6px;
-            border: 2px solid #e0e0e0;
-            border-radius: 4px;
-            font-size: 13px;
-        }
-        
-        .status-select:focus {
-            outline: none;
-            border-color: #6a0dad;
-        }
-        
-        .remarks-input {
-            width: 100%;
-            padding: 6px;
-            border: 2px solid #e0e0e0;
-            border-radius: 4px;
-            font-size: 13px;
-            resize: vertical;
-        }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .btn-primary {
-            background: #6a0dad;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background: #5a0c9d;
-        }
-        
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-            text-decoration: none;
-            display: inline-block;
-        }
-        
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        
-        .actions-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            gap: 15px;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #999;
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                padding: 15px;
-            }
-            
-            .actions-bar {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .btn {
-                width: 100%;
-            }
-        }
-    </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Manage Grades — <?php echo htmlspecialchars($section['course_name']); ?> (<?php echo htmlspecialchars($section['section_code']); ?>)</title>
+    <link rel="stylesheet" href="../assets/css/admin-style.css">
+    <link rel="stylesheet" href="../assets/css/manage-grades.css">
 </head>
 <body>
-    <div class="container">
-        <a href="dashboard.php" class="back-link">← Back to Dashboard</a>
-        
-        <div class="page-header">
-            <h1><?php echo htmlspecialchars($section['course_name']); ?> (<?php echo htmlspecialchars($section['section_code']); ?>)</h1>
-            <p>
-                <?php echo htmlspecialchars($section['course_code']); ?> •
-                <?php echo htmlspecialchars($section['program_name']); ?> •
-                Year <?php echo $section['year_level']; ?> •
-                Semester <?php echo $section['semester']; ?> •
-                <?php echo $section['enrolled_count']; ?>/<?php echo $section['capacity']; ?> students
-            </p>
-        </div>
-        
-        <?php if ($success): ?>
-            <div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div>
-        <?php endif; ?>
-        
-        <?php if ($error): ?>
-            <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
-        <?php endif; ?>
-        
-        <div class="grades-card">
-            <div class="actions-bar">
-                <h2 style="color: #6a0dad;">Grade Management</h2>
-                <div>
-                    <a href="assessments.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">
-                        Manage Assessments
-                    </a>
-                </div>
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1>Manage Grades</h1>
+                <div class="meta"><?php echo htmlspecialchars($section['course_code'] . ' — ' . $section['course_name']); ?> &middot; Section <?php echo htmlspecialchars($section['section_code']); ?></div>
             </div>
-            
-            <?php if (count($students) > 0 && count($assessments) > 0): ?>
-                <form method="POST">
-                    <div class="table-wrapper">
-                        <table class="grades-table">
+            <div class="meta small">Instructor dashboard</div>
+        </header>
+
+        <?php if ($success): ?><div class="notice success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
+        <?php if ($error): ?><div class="notice error"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
+
+        <div class="grades-grid">
+            <div class="left">
+                <form id="gradesForm" method="POST">
+                    <input type="hidden" name="submit_grades" value="1">
+                    <div style="overflow:auto;">
+                        <table class="grades" id="gradesTable">
                             <thead>
+                                <?php // Top header: periods with total percentage (colspan = number of assessments under period)
+                                $periodColCounts = [];
+                                foreach ($grouped as $pname => $pdata) {
+                                    $count = 0;
+                                    foreach ($pdata['criteria'] as $c) { $count += count($c['assessments']); }
+                                    $periodColCounts[$pname] = $count;
+                                }
+                                ?>
                                 <tr>
-                                    <th>Student ID</th>
-                                    <th>Name</th>
-                                    <?php foreach ($grouped_assessments as $criteria_name => $criteria_assessments): ?>
-                                        <?php foreach ($criteria_assessments as $index => $assessment): ?>
-                                            <?php if ($index === 0): ?>
-                                                <th colspan="<?php echo count($criteria_assessments); ?>" style="text-align: center; background: #5a0c9d;">
-                                                    <?php echo htmlspecialchars($criteria_name); ?> (<?php echo $assessment['percentage']; ?>%)
-                                                </th>
-                                            <?php endif; ?>
-                                        <?php endforeach; ?>
+                                    <th rowspan="3">Student</th>
+                                    <?php foreach ($grouped as $pname => $pdata): ?>
+                                        <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars($pname); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
                                     <?php endforeach; ?>
+                                    <th rowspan="3">Tentative (%)</th>
+                                    <th rowspan="3">Final (%)</th>
                                 </tr>
+                                <?php // Second header: criteria rows
+                                ?>
                                 <tr>
-                                    <th></th>
-                                    <th></th>
-                                    <?php foreach ($assessments as $assessment): ?>
-                                        <th style="background: #7b1fa2;">
-                                            <?php echo htmlspecialchars($assessment['name']); ?>
-                                            <br>
-                                            <small style="font-weight: normal; opacity: 0.8;">
-                                                Max: <?php echo $assessment['total_score']; ?>
-                                            </small>
-                                        </th>
+                                    <?php foreach ($grouped as $pname => $pdata):
+                                        foreach ($pdata['criteria'] as $cname => $cdata):
+                                            $cspan = count($cdata['assessments']); ?>
+                                            <th colspan="<?php echo intval($cspan); ?>"><?php echo htmlspecialchars($cname); ?><br><small class="small"><?php echo number_format($cdata['percentage'],2); ?>%</small></th>
+                                    <?php endforeach; endforeach; ?>
+                                </tr>
+                                <?php // Third header: individual assessments
+                                ?>
+                                <tr>
+                                    <?php foreach ($displayAssessments as $a): ?>
+                                        <th data-assessment-id="<?php echo (int)$a['id']; ?>"><?php echo htmlspecialchars($a['name']); ?><br><small class="small">Max: <?php echo htmlspecialchars(number_format($a['max'],2)); ?></small></th>
                                     <?php endforeach; ?>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($students as $student): ?>
-                                    <tr>
-                                        <td class="student-info">
-                                            <?php echo htmlspecialchars($student['student_number']); ?>
-                                        </td>
-                                        <td class="student-info">
-                                            <?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?>
-                                        </td>
-                                        <?php foreach ($assessments as $assessment): ?>
-                                            <?php
-                                                $enrollmentId = $student['enrollment_id'];
-                                                $assessmentId = $assessment['id'];
-                                                $existingGrade = $grades[$enrollmentId][$assessmentId] ?? null;
-                                            ?>
+                                <?php foreach ($students as $student): $enroll = $student['enrollment_id']; ?>
+                                    <tr data-enrollment-id="<?php echo $enroll; ?>">
+                                        <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
+                                        <?php foreach ($displayAssessments as $a): $aid = $a['id']; $existing = isset($grades[$enroll][$aid]) ? $grades[$enroll][$aid] : null; ?>
                                             <td>
-                                                <input
-                                                    type="number"
-                                                    name="grades[<?php echo $enrollmentId; ?>][<?php echo $assessmentId; ?>][grade]"
-                                                    class="grade-input"
-                                                    min="0"
-                                                    max="100"
-                                                    step="0.01"
-                                                    value="<?php echo $existingGrade ? htmlspecialchars($existingGrade['grade']) : ''; ?>"
-                                                    placeholder="0-100"
-                                                >
+                                                <input type="number" class="grade-input" step="0.01" min="0" max="<?php echo htmlspecialchars($a['max']); ?>"
+                                                       name="grades[<?php echo $enroll; ?>][<?php echo $aid; ?>][grade]"
+                                                       data-assessment-id="<?php echo (int)$aid; ?>"
+                                                       data-max="<?php echo htmlspecialchars($a['max']); ?>"
+                                                       data-period="<?php echo htmlspecialchars($a['period']); ?>"
+                                                       value="<?php echo $existing ? htmlspecialchars($existing['grade']) : ''; ?>">
                                             </td>
                                         <?php endforeach; ?>
+                                        <td class="tentative-cell" style="text-align:right; font-weight:600;">0.00%</td>
+                                        <td class="final-cell" style="text-align:right; font-weight:600;">0.00%</td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
                     </div>
-                    
-                    <div style="margin-top: 30px; text-align: right;">
-                        <button type="submit" name="submit_grades" class="btn btn-primary">
-                            💾 Save All Grades
-                        </button>
+                    <div class="controls">
+                        <button type="button" id="saveBtn" class="btn primary">Save All Grades</button>
+                        <button type="button" id="resetBtn" class="btn ghost">Reset</button>
                     </div>
+                    <!-- Moved ajaxMessage here after removing the summary sidebar -->
+                    <div id="ajaxMessage" style="margin-top:12px; display:none;"></div>
                 </form>
-            <?php elseif (count($assessments) === 0): ?>
-                <div class="empty-state">
-                    <h3>No Assessments Created</h3>
-                    <p>Please create assessments first before entering grades.</p>
-                    <a href="assessments.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-primary" style="margin-top: 20px;">
-                        Create Assessments
-                    </a>
-                </div>
-            <?php else: ?>
-                <div class="empty-state">
-                    <h3>No Students Enrolled</h3>
-                    <p>There are no students enrolled in this course yet.</p>
-                </div>
-            <?php endif; ?>
+            </div>
         </div>
     </div>
+
+    <script>
+    // Page data from server
+    const assessments = <?php echo json_encode($assessmentMeta); ?>;
+    const periodMeta = <?php echo json_encode($periodMeta); ?>;
+
+        // Helpers
+        function qs(sel, ctx=document) { return ctx.querySelector(sel); }
+        function qsa(sel, ctx=document) { return Array.from(ctx.querySelectorAll(sel)); }
+
+        // Live summary recalculation
+        function recalcSummary() {
+            const rows = qsa('#gradesTable tbody tr');
+            rows.forEach(row => {
+                const enroll = row.getAttribute('data-enrollment-id');
+                // compute per-period totals and track submitted possible per period
+                const perPeriodTotals = {};
+                const perPeriodSubmittedPossible = {};
+                qsa('input.grade-input', row).forEach(inp => {
+                    const v = inp.value.trim();
+                    const period = inp.getAttribute('data-period') || 'Unspecified';
+                    const max = parseFloat(inp.getAttribute('data-max')) || 0.0;
+                    if (!perPeriodTotals[period]) perPeriodTotals[period] = 0.0;
+                    if (!perPeriodSubmittedPossible[period]) perPeriodSubmittedPossible[period] = 0.0;
+                    if (v !== '' && !isNaN(v)) {
+                        perPeriodTotals[period] += parseFloat(v);
+                        perPeriodSubmittedPossible[period] += max;
+                    }
+                });
+
+                // Tentative: treat blanks as N/A, compute weighted percent only across periods where the student has submitted something
+                let tentativeNumerator = 0.0;
+                let tentativeWeightSum = 0.0;
+                for (const pName in periodMeta) {
+                    const meta = periodMeta[pName];
+                    const submittedPossible = perPeriodSubmittedPossible[pName] || 0.0;
+                    const studentTotal = perPeriodTotals[pName] || 0.0;
+                    const periodWeight = parseFloat(meta.percentage) || 0.0;
+                    if (submittedPossible > 0) {
+                        const periodPercent = (studentTotal / submittedPossible) * 100.0; // percent for that period based on submitted items
+                        tentativeNumerator += (periodPercent * periodWeight);
+                        tentativeWeightSum += periodWeight;
+                    }
+                }
+                let tentative = null;
+                if (tentativeWeightSum > 0) {
+                    tentative = (tentativeNumerator / tentativeWeightSum);
+                }
+
+                // Final: treat blanks as zero (conservative). Use full period possible from periodMeta
+                let finalPercent = 0.0;
+                for (const pName in periodMeta) {
+                    const meta = periodMeta[pName];
+                    const periodPossible = parseFloat(meta.possible) || 0.0;
+                    const studentTotal = perPeriodTotals[pName] || 0.0; // blanks counted as 0
+                    const periodWeight = parseFloat(meta.percentage) || 0.0;
+                    if (periodPossible > 0) {
+                        const portion = (studentTotal / periodPossible) * periodWeight;
+                        finalPercent += portion;
+                    }
+                }
+
+                // Update table cells
+                const tentCell = qs('td.tentative-cell', row);
+                const finalCell = qs('td.final-cell', row);
+                if (tentCell) tentCell.textContent = tentative === null ? 'N/A' : tentative.toFixed(2) + '%';
+                if (finalCell) finalCell.textContent = finalPercent.toFixed(2) + '%';
+
+                // No summary sidebar — totals are only shown in the tentative/final columns
+            });
+        }
+
+        // Validate inputs before sending
+        function validateAll() {
+            let ok = true;
+            qsa('input.grade-input').forEach(inp => {
+                inp.style.outline = 'none';
+                const v = inp.value.trim();
+                if (v === '') return; // allow blank -> incomplete
+                if (isNaN(v)) {
+                    ok = false; inp.style.outline = '2px solid #ffb4b4';
+                } else {
+                    const max = parseFloat(inp.getAttribute('data-max'));
+                    if (!isNaN(max) && parseFloat(v) > max) { ok = false; inp.style.outline = '2px solid #ffb4b4'; }
+                }
+            });
+            return ok;
+        }
+
+        // Gather form data into a JS object matching the server shape
+        function gatherGrades() {
+            const data = {};
+            qsa('#gradesTable tbody tr').forEach(row => {
+                const enroll = row.getAttribute('data-enrollment-id');
+                data[enroll] = {};
+                qsa('input.grade-input', row).forEach(inp => {
+                    const aid = inp.getAttribute('data-assessment-id');
+                    data[enroll][aid] = { grade: inp.value.trim() };
+                });
+            });
+            return data;
+        }
+
+        // Show AJAX messages
+        function showMessage(msg, ok=true) {
+            const el = qs('#ajaxMessage');
+            el.style.display = 'block';
+            el.textContent = msg;
+            el.className = ok ? 'notice success' : 'notice error';
+            setTimeout(()=> el.style.display = 'none', 4000);
+        }
+
+        // Events
+        document.addEventListener('input', (e) => { if (e.target.matches('input.grade-input')) recalcSummary(); });
+
+        qs('#resetBtn').addEventListener('click', () => { document.getElementById('gradesForm').reset(); recalcSummary(); });
+
+        qs('#saveBtn').addEventListener('click', async () => {
+            if (!validateAll()) { showMessage('Please fix invalid grade entries (red).', false); return; }
+
+            const grades = gatherGrades();
+            const form = new FormData();
+            form.append('submit_grades', '1');
+            form.append('ajax', '1');
+            form.append('grades_json', JSON.stringify(grades));
+
+            try {
+                const resp = await fetch(location.href, { method:'POST', headers:{ 'X-Requested-With':'XMLHttpRequest' }, body: form });
+                const data = await resp.json();
+                if (data.success) {
+                    showMessage(data.message || 'Saved', true);
+                } else {
+                    showMessage(data.message || 'Save failed', false);
+                }
+            } catch (err) {
+                showMessage('Network or server error when saving.', false);
+                console.error(err);
+            }
+        });
+
+        // On page load, recalc summary
+        recalcSummary();
+    </script>
+
 </body>
 </html>
+
+<?php
+// Server-side: If AJAX request and grades_json is present, decode and process
+if ($isAjax && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!empty($_POST['grades_json'])) {
+        $payload = json_decode($_POST['grades_json'], true);
+        $result = processGrades($pdo, $payload);
+        header('Content-Type: application/json');
+        echo json_encode($result);
+        exit;
+    }
+}
+
+?>

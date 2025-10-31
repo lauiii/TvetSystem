@@ -58,9 +58,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $error = 'Total criteria percentage for ' . ucfirst($period) . ' cannot exceed ' . $periodLimits[$period] . '%. Current total: ' . $currentPeriodTotal . '%.';
         } else {
             try {
-                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)');
-                $stmt->execute([$course_id, $name, $period, $percentage]);
-                $msg = 'Assessment criteria added successfully.';
+                    // Strengthen duplicate criteria prevention: use TRIM + case-insensitive COLLATE and a transaction
+                    $pdo->beginTransaction();
+                    try {
+                        $dupCrit = $pdo->prepare('SELECT id FROM assessment_criteria WHERE course_id = ? AND period = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
+                        $dupCrit->execute([$course_id, $period, $name]);
+                        if ($dupCrit->fetch()) {
+                            $pdo->rollBack();
+                            $error = 'A criteria with that name already exists for this course and period.';
+                        } else {
+                            $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)');
+                            $stmt->execute([$course_id, $name, $period, $percentage]);
+                            $pdo->commit();
+                            $msg = 'Assessment criteria added successfully.';
+                        }
+                    } catch (Exception $e) {
+                        $pdo->rollBack();
+                        throw $e;
+                    }
             } catch (Exception $e) {
                 $error = 'Failed to add criteria: ' . $e->getMessage();
             }
@@ -89,10 +104,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $error = 'Total score must be greater than 0.';
     } else {
         try {
-            $stmt = $pdo->prepare('INSERT INTO assessment_items (criteria_id, name, total_score) VALUES (?, ?, ?)');
-            $stmt->execute([$criteria_id, $name, $total_score]);
-            $msg = 'Assessment item added successfully.';
+            // Use transaction + robust duplicate check to avoid race conditions
+            $pdo->beginTransaction();
+            $dupCheck = $pdo->prepare('SELECT id FROM assessment_items WHERE criteria_id = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
+            $dupCheck->execute([$criteria_id, $name]);
+            if ($dupCheck->fetch()) {
+                $pdo->rollBack();
+                $error = 'An assessment item with that name already exists for this criteria.';
+            } else {
+                $stmt = $pdo->prepare('INSERT INTO assessment_items (criteria_id, name, total_score) VALUES (?, ?, ?)');
+                $stmt->execute([$criteria_id, $name, $total_score]);
+                $pdo->commit();
+                $msg = 'Assessment item added successfully.';
+            }
         } catch (Exception $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
             $error = 'Failed to add item: ' . $e->getMessage();
         }
     }
@@ -229,20 +255,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Get criteria and items for selected course
 $criteria = [];
 if ($courseId > 0) {
+    // Preserve insertion order so criteria appear in the order they were created by the instructor
     $stmt = $pdo->prepare("
         SELECT ac.*, COUNT(ai.id) as item_count
         FROM assessment_criteria ac
         LEFT JOIN assessment_items ai ON ac.id = ai.criteria_id
         WHERE ac.course_id = ?
         GROUP BY ac.id
-        ORDER BY ac.period, ac.name
+        ORDER BY ac.id ASC
     ");
     $stmt->execute([$courseId]);
     $criteria = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Debug logging: record what criteria were fetched for this course to help diagnose UI duplication issues
+    try {
+        $debugLog = date('c') . " | [debug] fetched criteria for course_id={$courseId}, count=" . count($criteria) . "\n";
+        foreach ($criteria as $c) {
+            $debugLog .= " - id=" . ($c['id'] ?? 'NULL') . ", name=" . ($c['name'] ?? '') . ", period=" . ($c['period'] ?? '') . ", percentage=" . ($c['percentage'] ?? '') . "\n";
+        }
+        @file_put_contents(__DIR__ . '/../logs/grades_errors.log', $debugLog, FILE_APPEND);
+    } catch (Exception $e) { /* ignore logging failures */ }
 
     // Get items for each criteria
     foreach ($criteria as &$criterion) {
-        $itemStmt = $pdo->prepare("SELECT * FROM assessment_items WHERE criteria_id = ? ORDER BY name");
+        // Preserve insertion order so newly added items appear in the order they were added.
+        // Use id ASC which is the auto-increment primary key (insertion order) instead of alphabetical name sorting.
+        $itemStmt = $pdo->prepare("SELECT * FROM assessment_items WHERE criteria_id = ? ORDER BY id ASC");
         $itemStmt->execute([$criterion['id']]);
         $criterion['items'] = $itemStmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -708,6 +745,19 @@ if ($courseId > 0) {
     </div>
 
     <script>
+        // Prevent double-submit for add forms: disable submit buttons on click
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('form').forEach(function(form) {
+                form.addEventListener('submit', function(e) {
+                    const btn = form.querySelector('button[type="submit"]');
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.dataset.origText = btn.textContent;
+                        btn.textContent = 'Processing...';
+                    }
+                });
+            });
+        });
         function openEditCriteriaModal(id, name, period, percentage) {
             document.getElementById('edit_criteria_id').value = id;
             document.getElementById('edit_criteria_name').value = name;
