@@ -245,3 +245,119 @@ Payload: {"376":{"82":{"grade":""},"83":{"grade":""},"84":{"grade":""}}}
 2025-10-31T11:19:58+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
 2025-10-31T11:20:01+01:00 | [criteria] course_id=26, count=4
 2025-10-31T11:21:03+01:00 | [criteria] course_id=26, count=4
+2025-10-31T12:26:26+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:28:30+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:28:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:28:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:29:03+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:29:03+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:33:44+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:34:26+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:34:27+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:34:40+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:34:40+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:34:50+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:38:04+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:38:05+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:38:48+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:38:49+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:39:22+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:39:22+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:39:37+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:39:37+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:39:38+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:43:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:45+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:46:53+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:52:12+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:52:29+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:52:29+01:00 | [manage-grades] section_id=63, course_id=26, assessments=8, displayAssessments=8
+2025-10-31T12:52:59+01:00 | [criteria] course_id=26, count=4
+2025-10-31T12:55:01+01:00 | [criteria] course_id=26, count=4
+2025-10-31T12:55:27+01:00 | [criteria] course_id=26, count=5
+2025-10-31T12:55:43+01:00 | [criteria] course_id=26, count=6
+2025-10-31T12:55:56+01:00 | [criteria] course_id=26, count=7
+2025-10-31T12:56:13+01:00 | [criteria] course_id=26, count=7
+2025-10-31T12:56:39+01:00 | [criteria] course_id=26, count=7
+2025-10-31T12:56:51+01:00 | [criteria] course_id=26, count=7
+2025-10-31T12:57:00+01:00 | [criteria] course_id=26, count=7
+2025-10-31T12:57:03+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:00:59+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:01:41+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:03:27+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:03:43+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:06:05+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:06:13+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:06:14+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:06:32+01:00 | [criteria] course_id=26, count=7
+2025-10-31T13:07:40+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:16:14+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:18:57+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:19:59+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:20:00+01:00 | [manage-grades] section_id=63, course_id=26, assessments=12, displayAssessments=12
+2025-10-31T13:21:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:21:52+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:22:13+01:00 | [criteria] course_id=26, count=11
+2025-10-31T13:22:20+01:00 | [criteria] course_id=26, count=11
+2025-10-31T13:22:26+01:00 | [criteria] course_id=26, count=11
+2025-10-31T13:22:36+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:26:32+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:28:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:28:48+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:28:49+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:28:50+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:28:50+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:33:44+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:38:51+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:40:06+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:40:06+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:40:07+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:40:17+01:00 | [manage-grades] section_id=63, course_id=26, assessments=20, displayAssessments=20
+2025-10-31T13:40:20+01:00 | [criteria] course_id=26, count=11
+2025-10-31T13:40:30+01:00 | [criteria] course_id=26, count=10
+2025-10-31T13:40:59+01:00 | [criteria] course_id=26, count=10
+2025-10-31T13:41:09+01:00 | [criteria] course_id=26, count=9
+2025-10-31T13:41:15+01:00 | [criteria] course_id=26, count=8
+2025-10-31T13:41:19+01:00 | [criteria] course_id=26, count=7
+2025-10-31T13:41:42+01:00 | [criteria] course_id=26, count=8
+2025-10-31T13:41:54+01:00 | [criteria] course_id=26, count=8
+2025-10-31T13:41:57+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T13:49:36+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:07:02+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:07:03+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:07:16+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:07:16+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:07:17+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:08:05+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:08:08+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:09:34+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:11:24+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:11:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:12:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:13:11+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:15:19+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:45:21+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:45:25+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:45:32+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:45:38+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:48:09+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:50:58+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:51:11+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:51:29+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:51:45+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:55:21+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:55:27+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:55:36+01:00 | Failed to process grades: Invalid IDs in payload: enrollment:null
+Payload: {"376":{"110":{"grade":""}},"377":{"110":{"grade":""}},"null":[]}
+2025-10-31T14:55:42+01:00 | Failed to process grades: Invalid IDs in payload: enrollment:null
+Payload: {"376":{"110":{"grade":""}},"377":{"110":{"grade":""}},"null":[]}
+2025-10-31T14:58:05+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T14:58:15+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T15:00:11+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T15:00:32+01:00 | [criteria] course_id=26, count=8
+2025-10-31T15:00:39+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13
+2025-10-31T15:00:41+01:00 | [manage-grades] section_id=63, course_id=26, assessments=13, displayAssessments=13

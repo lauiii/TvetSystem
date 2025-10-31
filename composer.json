@@ -1,0 +1,18 @@
+{
+    "name": "pc/tvetsystem",
+    "description": "composer require phpmailer/phpmailer",
+    "autoload": {
+        "psr-4": {
+            "Pc\\Tvetsystem\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Laui",
+            "email": "126447881+lauiii@users.noreply.github.com"
+        }
+    ],
+    "require": {
+        "phpmailer/phpmailer": "^7.0"
+    }
+}

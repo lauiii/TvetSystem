@@ -7,6 +7,7 @@
  */
 
 require_once '../config.php';
+require_once __DIR__ . '/../include/functions.php';
 requireRole('instructor');
 
 $instructorId = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 0;
@@ -29,6 +30,53 @@ $section = $stmt->fetch();
 if (!$section) {
     header('Location: dashboard.php');
     exit;
+}
+
+// Auto-provision assessment structure for missing periods so instructors don't have to re-create items
+try {
+    // Verify which periods already exist for this course
+    $pstmt = $pdo->prepare("SELECT DISTINCT period FROM assessment_criteria WHERE course_id = ?");
+    $pstmt->execute([$section['course_id']]);
+    $existingPeriods = array_map('strtolower', array_column($pstmt->fetchAll(PDO::FETCH_ASSOC), 'period'));
+    $allPeriods = ['prelim','midterm','finals'];
+    $missing = array_values(array_diff($allPeriods, $existingPeriods));
+
+    if (!empty($missing)) {
+        // Choose a source period to clone from: prefer 'prelim', else any existing
+        $sourcePeriod = in_array('prelim', $existingPeriods, true) ? 'prelim' : (count($existingPeriods) ? $existingPeriods[0] : null);
+        if ($sourcePeriod !== null) {
+            $pdo->beginTransaction();
+            // Fetch criteria of source period
+            $srcCritStmt = $pdo->prepare("SELECT id, name, percentage FROM assessment_criteria WHERE course_id = ? AND period = ? ORDER BY id");
+            $srcCritStmt->execute([$section['course_id'], $sourcePeriod]);
+            $sourceCriteria = $srcCritStmt->fetchAll(PDO::FETCH_ASSOC);
+            // Prepare item fetch
+            $srcItemStmt = $pdo->prepare("SELECT name, total_score FROM assessment_items WHERE criteria_id = ? ORDER BY id");
+
+            foreach ($missing as $tgtPeriod) {
+                // Skip if invalid target
+                if (!in_array($tgtPeriod, $allPeriods, true)) continue;
+                foreach ($sourceCriteria as $crit) {
+                    // Insert cloned criteria for target period
+                    $insCrit = $pdo->prepare("INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)");
+                    $insCrit->execute([$section['course_id'], $crit['name'], $tgtPeriod, $crit['percentage']]);
+                    $newCritId = (int)$pdo->lastInsertId();
+                    // Clone items under this criteria
+                    $srcItemStmt->execute([$crit['id']]);
+                    foreach ($srcItemStmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+                        $insItem = $pdo->prepare("INSERT INTO assessment_items (criteria_id, name, total_score) VALUES (?, ?, ?)");
+                        $insItem->execute([$newCritId, $item['name'], $item['total_score']]);
+                    }
+                }
+            }
+            $pdo->commit();
+            // Refresh page to reflect newly provisioned periods
+            header('Location: ' . $_SERVER['REQUEST_URI']);
+            exit;
+        }
+    }
+} catch (Exception $e) {
+    // best-effort; do not block page if provisioning fails
 }
 
 // Helper to process grades and return array with success/error
@@ -140,6 +188,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
     }
 }
 
+// Send grades summary to admin via email
+// moved send_to_admin to later after data fetches
+
 // Fetch assessments for this course
 $stmt = $pdo->prepare(
     "SELECT ai.id, ai.name, ai.total_score, ac.id as criteria_id, ac.name as criteria_name, ac.period, ac.percentage
@@ -247,6 +298,12 @@ foreach ($grouped as $periodName => $periodData) {
 // JS-friendly metadata list
 $assessmentMeta = [];
 $periodMeta = []; // periodName => ['percentage' => x, 'possible' => y]
+// Ensure all three periods exist even if no assessments yet
+foreach (['prelim','midterm','finals'] as $pRequired) {
+    if (!isset($grouped[$pRequired])) {
+        $grouped[$pRequired] = ['criteria' => [], 'period_percentage' => 0.0, 'possible' => 0.0];
+    }
+}
 foreach ($grouped as $pname => $pdata) {
     $periodMeta[$pname] = ['percentage' => $pdata['period_percentage'], 'possible' => $pdata['possible']];
 }
@@ -269,6 +326,72 @@ try {
 } catch (Exception $e) { /* ignore */ }
 
 $hasAssessments = count($displayAssessments) > 0;
+
+// Send grades summary to admin via email (now placed after data fetches)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
+    require_once __DIR__ . '/../include/email-functions.php';
+    $sumHtml = '<h3>Grades Summary — ' . htmlspecialchars($section['course_code'] . ' — ' . $section['course_name']) . ' (Section ' . htmlspecialchars($section['section_code']) . ')</h3>';
+    foreach (['prelim','midterm','finals'] as $per) {
+        $sumHtml .= '<h4 style="margin:12px 0 6px;">' . strtoupper($per) . '</h4>';
+        $sumHtml .= '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; width:100%;">';
+        $sumHtml .= '<tr><th align="left">Student</th><th align="left">Percent</th></tr>';
+        foreach ($students as $st) {
+            $possible = isset($periodMeta[$per]['possible']) ? floatval($periodMeta[$per]['possible']) : 0.0;
+            $total = 0.0;
+            if ($possible > 0) {
+                foreach ($assessments as $aRow) {
+                    if ($aRow['period'] !== $per) continue;
+                    $aid = (int)$aRow['id'];
+                    if (isset($grades[$st['enrollment_id']][$aid]) && $grades[$st['enrollment_id']][$aid]['grade'] !== null) {
+                        $total += floatval($grades[$st['enrollment_id']][$aid]['grade']);
+                    }
+                }
+            }
+            $pctVal = ($possible > 0) ? min(99, (($total / $possible) * 100.0)) : null;
+            $pct = ($pctVal === null) ? '' : number_format($pctVal, 2) . '%';
+            $sumHtml .= '<tr><td>' . htmlspecialchars($st['last_name'] . ', ' . $st['first_name']) . '</td><td>' . $pct . '</td></tr>';
+        }
+        $sumHtml .= '</table>';
+    }
+    // Build CSV (Final Result layout)
+    $csv = "Student,Prelim,Midterm,Finals,Tentative,Grade,Remarks\r\n";
+    foreach ($students as $student) {
+        $enroll = $student['enrollment_id'];
+        // re-use final section logic by computing per-period
+        $calc = function($per) use ($periodMeta, $assessments, $grades, $enroll){
+            $possible = isset($periodMeta[$per]['possible']) ? floatval($periodMeta[$per]['possible']) : 0.0;
+            if ($possible <= 0) return null;
+            $total = 0.0; $hasAll=true; $seen=0.0;
+            foreach ($assessments as $ar) {
+                if ($ar['period'] !== $per) continue;
+                $aid=(int)$ar['id'];
+                if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); } else { $hasAll=false; }
+            }
+            if (!$hasAll || $seen < $possible) return null;
+            return min(99, ($total / $possible) * 100.0);
+        };
+        $p=$calc('prelim'); $m=$calc('midterm'); $f=$calc('finals');
+        $wPre=30; $wMid=30; $wFin=40; $den=$wPre+$wMid+$wFin;
+        $haveAny = ($p!==null)||($m!==null)||($f!==null);
+        $tent = $haveAny ? min(99, ((($p??0)*$wPre + ($m??0)*$wMid + ($f??0)*$wFin)/$den)) : null;
+        $leeFinal = $tent===null ? null : lee_from_percent($tent);
+        $hasBlank = ($p===null)||($m===null)||($f===null);
+        $remarks = 'Incomplete';
+        if ($tent !== null) { $remarks = ($tent >= 75) ? 'Passed' : ($hasBlank ? 'Incomplete' : 'Failed'); }
+        $csv .= '"' . str_replace('"','""',$student['last_name'] . ', ' . $student['first_name']) . '",' .
+                ($p===null?'':number_format($p,2)) . ',' .
+                ($m===null?'':number_format($m,2)) . ',' .
+                ($f===null?'':number_format($f,2)) . ',' .
+                ($tent===null?'':number_format($tent,2)) . ',' .
+                ($leeFinal===null?'':number_format($leeFinal,2)) . ',' .
+                $remarks . "\r\n";
+    }
+
+    // Send email with CSV attachment
+    $ok = sendEmailWithAttachment('ascbtvet@gmail.com', 'Admin', 'Section Grades — ' . ($section['course_code'] ?? ''), $sumHtml, 'grades.csv', $csv, 'text/csv');
+    $success = $ok ? 'Grades sent to admin.' : '';
+    if (!$ok) { $error = 'Failed to send grades to admin.'; }
+}
 
 ?>
 <!doctype html>
@@ -300,79 +423,143 @@ $hasAssessments = count($displayAssessments) > 0;
             <div class="left">
                 <form id="gradesForm" method="POST">
                     <input type="hidden" name="submit_grades" value="1">
-                    <div style="overflow:auto;">
-                        <table class="grades" id="gradesTable">
-                            <thead>
-                                <?php // Top header: periods with total percentage (colspan = number of assessments under period)
-                                $periodColCounts = [];
-                                foreach ($grouped as $pname => $pdata) {
-                                    $count = 0;
-                                    foreach ($pdata['criteria'] as $c) { $count += count($c['assessments']); }
-                                    $periodColCounts[$pname] = $count;
+                    <div>
+                        <?php // Period tabs
+                        $periodKeys = array_keys($grouped);
+                        ?>
+                        <div id="periodTabs" style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+                            <?php foreach ($periodKeys as $i => $pkey): ?>
+                                <button type="button" class="btn period-tab <?php echo $i===0 ? 'primary' : 'ghost'; ?>" data-show-period="<?php echo htmlspecialchars($pkey); ?>"><?php echo htmlspecialchars(ucfirst($pkey)); ?></button>
+                            <?php endforeach; ?>
+                            <button type="button" class="btn period-tab ghost" data-show-period="final-result">Final Result</button>
+                        </div>
+
+                        <?php // Render one table per period ?>
+                        <?php foreach ($grouped as $pname => $pdata): ?>
+                            <?php
+                                // flatten assessments for this period only
+                                $periodAssessments = [];
+                                foreach ($pdata['criteria'] as $cid => $cdata) {
+                                    foreach ($cdata['assessments'] as $ass) {
+                                        $periodAssessments[] = array_merge($ass, ['period' => $pname]);
+                                    }
                                 }
-                                ?>
-                                <tr>
-                                    <th rowspan="3">Student</th>
-                                    <?php if ($hasAssessments): ?>
-                                        <?php foreach ($grouped as $pname => $pdata): ?>
-                                            <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars(ucfirst($pname)); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
+                            ?>
+                            <div class="period-table-wrap" data-period="<?php echo htmlspecialchars($pname); ?>" style="<?php echo ($pname === $periodKeys[0] ? '' : 'display:none;'); ?> overflow:auto;">
+                                <table class="grades grades-period-table" id="gradesTable-<?php echo htmlspecialchars($pname); ?>">
+                                    <thead>
+                                        <tr>
+                                            <th rowspan="3">Student</th>
+                                            <th colspan="<?php echo count($periodAssessments) + 1; ?>"><?php echo htmlspecialchars(ucfirst($pname)); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
+                                            <th rowspan="3">Grade</th>
+                                            <th rowspan="3">Remarks</th>
+                                        </tr>
+                                        <tr>
+                                            <?php foreach ($pdata['criteria'] as $cid => $cdata): $cspan = count($cdata['assessments']); ?>
+                                                <th colspan="<?php echo intval($cspan); ?>"><?php echo htmlspecialchars($cdata['name']); ?><br><small class="small"><?php echo number_format($cdata['percentage'],2); ?>%</small></th>
+                                            <?php endforeach; ?>
+                                            <th>Total (%)</th>
+                                        </tr>
+                                        <tr>
+                                            <?php foreach ($periodAssessments as $a): ?>
+                                                <th data-assessment-id="<?php echo (int)$a['id']; ?>"><?php echo htmlspecialchars($a['name']); ?><br><small class="small">Max: <?php echo htmlspecialchars(number_format($a['max'],2)); ?></small></th>
+                                            <?php endforeach; ?>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (!$hasAssessments): ?>
+                                            <tr>
+                                                <td colspan="3" style="color:#666;">No assessments found for this course.</td>
+                                            </tr>
+                                        <?php endif; ?>
+                                        <?php foreach ($students as $student): $enroll = $student['enrollment_id']; ?>
+                                            <tr data-enrollment-id="<?php echo $enroll; ?>">
+                                                <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
+                                                <?php foreach ($periodAssessments as $a): $aid = $a['id']; $existing = isset($grades[$enroll][$aid]) ? $grades[$enroll][$aid] : null; ?>
+                                                    <td>
+                                                        <input type="number" class="grade-input" step="0.01" min="0" max="<?php echo htmlspecialchars($a['max']); ?>"
+                                                               name="grades[<?php echo $enroll; ?>][<?php echo $aid; ?>][grade]"
+                                                               data-assessment-id="<?php echo (int)$aid; ?>"
+                                                               data-max="<?php echo htmlspecialchars($a['max']); ?>"
+                                                               data-period="<?php echo htmlspecialchars($pname); ?>"
+                                                               value="<?php echo $existing ? htmlspecialchars($existing['grade']) : ''; ?>">
+                                                    </td>
+                                                <?php endforeach; ?>
+                                                <td class="period-total-cell" data-period="<?php echo htmlspecialchars($pname); ?>" style="text-align:right; font-weight:600;">N/A</td>
+                                                <td class="lee-cell" style="text-align:right; font-weight:600;">-</td>
+                                                <td class="remarks-cell" style="text-align:right; font-weight:600;">-</td>
+                                            </tr>
                                         <?php endforeach; ?>
-                                    <?php endif; ?>
-                                    <th rowspan="3">Tentative (%)</th>
-                                    <th rowspan="3">Final (%)</th>
-                                </tr>
-                                <?php // Second header: criteria rows
-                                ?>
-                                <tr>
-                                    <?php foreach ($grouped as $pname => $pdata):
-                                        foreach ($pdata['criteria'] as $cid => $cdata):
-                                            $cspan = count($cdata['assessments']); ?>
-                                            <th colspan="<?php echo intval($cspan); ?>"><?php echo htmlspecialchars($cdata['name']); ?><br><small class="small"><?php echo number_format($cdata['percentage'],2); ?>% · Total: <?php echo htmlspecialchars(number_format($cdata['possible'], 2)); ?> pts</small></th>
-                                    <?php endforeach; endforeach; ?>
-                                </tr>
-                                <?php // Third header: individual assessments
-                                ?>
-                                <tr>
-                                    <?php if ($hasAssessments): ?>
-                                        <?php foreach ($displayAssessments as $a): ?>
-                                            <th data-assessment-id="<?php echo (int)$a['id']; ?>"><?php echo htmlspecialchars($a['name']); ?><br><small class="small">Max: <?php echo htmlspecialchars(number_format($a['max'],2)); ?></small></th>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (!$hasAssessments): ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endforeach; ?>
+
+                        <?php // Final Result summary table ?>
+                        <div class="period-table-wrap" data-period="final-result" style="display:none; overflow:auto;">
+                            <table class="grades grades-period-table" id="gradesTable-final">
+                                <thead>
                                     <tr>
-                                        <td colspan="3" style="color:#666;">
-                                            No assessments found for this course. Please create criteria and items first.
-                                            <br>
-                                            <a class="small" href="assessments.php?course_id=<?php echo (int)$section['course_id']; ?>">Go to Manage Assessments</a>
-                                        </td>
+                                        <th>Student</th>
+                                        <th>Prelim (%)</th>
+                                        <th>Midterm (%)</th>
+                                        <th>Finals (%)</th>
+                                        <th>Tentative (%)</th>
+                                        <th>Grade</th>
+                                        <th>Remarks</th>
                                     </tr>
-                                <?php endif; ?>
-                                <?php foreach ($students as $student): $enroll = $student['enrollment_id']; ?>
-                                    <tr data-enrollment-id="<?php echo $enroll; ?>">
-                                        <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
-                                        <?php foreach ($displayAssessments as $a): $aid = $a['id']; $existing = isset($grades[$enroll][$aid]) ? $grades[$enroll][$aid] : null; ?>
-                                            <td>
-                                                <input type="number" class="grade-input" step="0.01" min="0" max="<?php echo htmlspecialchars($a['max']); ?>"
-                                                       name="grades[<?php echo $enroll; ?>][<?php echo $aid; ?>][grade]"
-                                                       data-assessment-id="<?php echo (int)$aid; ?>"
-                                                       data-max="<?php echo htmlspecialchars($a['max']); ?>"
-                                                       data-period="<?php echo htmlspecialchars($a['period']); ?>"
-                                                       value="<?php echo $existing ? htmlspecialchars($existing['grade']) : ''; ?>">
-                                            </td>
-                                        <?php endforeach; ?>
-                                        <td class="tentative-cell" style="text-align:right; font-weight:600;">0.00%</td>
-                                        <td class="final-cell" style="text-align:right; font-weight:600;">0.00%</td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($students as $student): $enroll=$student['enrollment_id']; ?>
+                                        <?php
+                                            $calc = function($per) use ($periodMeta, $assessments, $grades, $enroll){
+                                                $possible = isset($periodMeta[$per]['possible']) ? floatval($periodMeta[$per]['possible']) : 0.0;
+                                                if ($possible <= 0) return null;
+                                                $total = 0.0; $hasAll=true; $seen=0.0;
+                                                foreach ($assessments as $ar) {
+                                                    if ($ar['period'] !== $per) continue;
+                                                    $aid=(int)$ar['id'];
+                                                    if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); } else { $hasAll=false; }
+                                                }
+                                                if (!$hasAll || $seen < $possible) return null; // incomplete
+                                                $val = ($total / $possible) * 100.0;
+                                                return min(99, $val);
+                                            };
+                                            $p = $calc('prelim');
+                                            $m = $calc('midterm');
+                                            $f = $calc('finals');
+                                            // Compute Tentative as weighted across all periods (Prelim 30, Midterm 30, Finals 40)
+                                            $wPre = 30.0; $wMid = 30.0; $wFin = 40.0; $den = ($wPre+$wMid+$wFin);
+                                            $haveAny = ($p !== null) || ($m !== null) || ($f !== null);
+                                            $cum = $haveAny ? min(99, ((($p ?? 0.0)*$wPre + ($m ?? 0.0)*$wMid + ($f ?? 0.0)*$wFin) / $den)) : null;
+                                            $remark = 'Incomplete'; $cls='text-secondary';
+                                            $hasBlank = ($p === null) || ($m === null) || ($f === null);
+                                            if ($cum !== null) {
+                                                if ($cum >= 75.0) { $remark='Passed'; $cls='text-success'; }
+                                                else { $remark = $hasBlank ? 'Incomplete' : 'Failed'; $cls = $hasBlank ? 'text-secondary' : 'text-danger'; }
+                                            }
+                                            $leeFinal = $cum === null ? null : lee_from_percent($cum);
+                                        ?>
+                                        <tr>
+                                            <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
+                                            <td><?php echo $p===null ? '' : number_format($p,2) ; ?></td>
+                                            <td><?php echo $m===null ? '' : number_format($m,2) ; ?></td>
+                                            <td><?php echo $f===null ? '' : number_format($f,2) ; ?></td>
+                                            <td><?php echo $cum===null ? '' : number_format($cum,2) ; ?></td>
+                                            <td><?php echo $leeFinal===null ? '—' : number_format($leeFinal,2); ?></td>
+                                            <td class="<?php echo $cls; ?>"><?php echo $remark; ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="controls">
                         <button type="button" id="saveBtn" class="btn primary">Save All Grades</button>
                         <button type="button" id="resetBtn" class="btn ghost">Reset</button>
+                        <button type="button" id="printBtn" class="btn ghost" onclick="window.print()">Print</button>
+                        <button type="submit" name="send_to_admin" value="1" class="btn btn-secondary">Send to Admin</button>
                     </div>
                     <!-- Moved ajaxMessage here after removing the summary sidebar -->
                     <div id="ajaxMessage" style="margin-top:12px; display:none;"></div>
@@ -390,15 +577,41 @@ $hasAssessments = count($displayAssessments) > 0;
         function qs(sel, ctx=document) { return ctx.querySelector(sel); }
         function qsa(sel, ctx=document) { return Array.from(ctx.querySelectorAll(sel)); }
 
+        // Period tab toggle
+        function showPeriod(p){
+            // Show the requested period and hide the others
+            qsa('.period-table-wrap').forEach(div => {
+                div.style.display = (div.getAttribute('data-period') === p) ? '' : 'none';
+            });
+            qsa('.period-tab').forEach(btn=>{
+                if(btn.getAttribute('data-show-period')===p){ btn.classList.remove('ghost'); btn.classList.add('primary'); }
+                else { btn.classList.add('ghost'); btn.classList.remove('primary'); }
+            });
+        }
+
+        // Delegate clicks on tabs
+        document.addEventListener('DOMContentLoaded', function(){
+            const tabs = document.getElementById('periodTabs');
+            if (!tabs) return;
+            tabs.addEventListener('click', function(e){
+                const btn = e.target.closest('.period-tab');
+                if (!btn) return;
+                const p = (btn.getAttribute('data-show-period') || '').toLowerCase();
+                if (p) showPeriod(p);
+            });
+        });
+
         // Live summary recalculation
         function recalcSummary() {
-            const rows = qsa('#gradesTable tbody tr');
+            const rows = qsa('table.grades-period-table tbody tr');
             rows.forEach(row => {
                 const enroll = row.getAttribute('data-enrollment-id');
+                const inputs = qsa('input.grade-input', row);
+                if (!enroll || inputs.length === 0) { return; } // skip non-student rows (e.g., final result table)
                 // compute per-period totals and track submitted possible per period
                 const perPeriodTotals = {};
                 const perPeriodSubmittedPossible = {};
-                qsa('input.grade-input', row).forEach(inp => {
+                inputs.forEach(inp => {
                     const v = inp.value.trim();
                     const period = inp.getAttribute('data-period') || 'Unspecified';
                     const max = parseFloat(inp.getAttribute('data-max')) || 0.0;
@@ -442,11 +655,86 @@ $hasAssessments = count($displayAssessments) > 0;
                     }
                 }
 
+                // Per-period percent totals (0-100) using full possible per period
+                const perPeriodPercents = {};
+                const perPeriodCompleteness = {};
+                ['prelim','midterm','finals'].forEach(p => {
+                    const meta = periodMeta[p] || { possible: 0 };
+                    const possible = parseFloat(meta.possible) || 0.0;
+                    const total = perPeriodTotals[p] || 0.0;
+                    const submitted = perPeriodSubmittedPossible[p] || 0.0;
+                    const pct = possible > 0 ? Math.min(99, (total / possible) * 100.0) : null;
+                    perPeriodPercents[p] = pct;
+                    perPeriodCompleteness[p] = possible > 0 ? (submitted >= possible) : false;
+                });
+
+                // LEE mapping and remarks
+                function leeFromPercent(p) {
+                    if (p === null || isNaN(p)) return null;
+                    const x = Math.round(p);
+                    if (x >= 95) return 1.00;
+                    if (x === 94) return 1.10;
+                    if (x === 93) return 1.20;
+                    if (x === 92) return 1.30;
+                    if (x === 91) return 1.40;
+                    if (x === 90) return 1.50;
+                    if (x === 89) return 1.60;
+                    if (x === 88) return 1.70;
+                    if (x === 87) return 1.80;
+                    if (x === 86) return 1.90;
+                    if (x === 85) return 2.00;
+                    if (x === 84) return 2.10;
+                    if (x === 83) return 2.20;
+                    if (x === 82) return 2.30;
+                    if (x === 81) return 2.40;
+                    if (x === 80) return 2.50;
+                    if (x === 79) return 2.60;
+                    if (x === 78) return 2.70;
+                    if (x === 77) return 2.80;
+                    if (x === 76) return 2.90;
+                    if (x === 75) return 3.00;
+                    if (x < 75) return 5.00;
+                    return 1.00;
+                }
+                function leeRemarks(lee) {
+                    if (lee === null) return { text: 'Incomplete', cls: 'text-secondary' };
+                    if (lee <= 3.0) return { text: 'Passed', cls: 'text-success' };
+                    if (lee > 3.0 && lee < 5.0) return { text: 'Conditional', cls: 'text-warning' };
+                    if (lee >= 5.0) return { text: 'Failed', cls: 'text-danger' };
+                    return { text: 'Incomplete', cls: 'text-secondary' };
+                }
+                // Determine current table's period and compute LEE/remarks for that period only
+                let currentPeriod = null;
+                const wrap = row.closest('.period-table-wrap');
+                if (wrap) currentPeriod = (wrap.getAttribute('data-period') || '').toLowerCase();
+                const periodPct = currentPeriod ? perPeriodPercents[currentPeriod] : null;
+                const isComplete = currentPeriod ? perPeriodCompleteness[currentPeriod] : false;
+                let lee = null; let rem = { text: 'Incomplete', cls: 'text-secondary' };
+                if (periodPct === null || !isComplete) {
+                    rem = { text: 'Incomplete', cls: 'text-secondary' };
+                } else {
+                    lee = leeFromPercent(periodPct);
+                    rem = leeRemarks(lee);
+                }
+
                 // Update table cells
                 const tentCell = qs('td.tentative-cell', row);
                 const finalCell = qs('td.final-cell', row);
                 if (tentCell) tentCell.textContent = tentative === null ? 'N/A' : tentative.toFixed(2) + '%';
                 if (finalCell) finalCell.textContent = finalPercent.toFixed(2) + '%';
+
+                // Update per-period inline total cells
+                const prelimCell = qs('td.period-total-cell[data-period="prelim"]', row);
+                const midtermCell = qs('td.period-total-cell[data-period="midterm"]', row);
+                const finalsCell = qs('td.period-total-cell[data-period="finals"]', row);
+                const avgCell = qs('td.avg-total-cell', row);
+                const leeCell = qs('td.lee-cell', row);
+                const remarksCell = qs('td.remarks-cell', row);
+                if (prelimCell) prelimCell.textContent = perPeriodPercents['prelim'] == null ? '' : perPeriodPercents['prelim'].toFixed(2) + '%';
+                if (midtermCell) midtermCell.textContent = perPeriodPercents['midterm'] == null ? '' : perPeriodPercents['midterm'].toFixed(2) + '%';
+                if (finalsCell) finalsCell.textContent = perPeriodPercents['finals'] == null ? '' : perPeriodPercents['finals'].toFixed(2) + '%';
+                if (leeCell) leeCell.textContent = lee == null ? '—' : lee.toFixed(2);
+                if (remarksCell) { remarksCell.textContent = rem.text; remarksCell.className = 'remarks-cell ' + rem.cls; }
 
                 // No summary sidebar — totals are only shown in the tentative/final columns
             });
@@ -472,10 +760,12 @@ $hasAssessments = count($displayAssessments) > 0;
         // Gather form data into a JS object matching the server shape
         function gatherGrades() {
             const data = {};
-            qsa('#gradesTable tbody tr').forEach(row => {
+            qsa('table.grades-period-table tbody tr').forEach(row => {
                 const enroll = row.getAttribute('data-enrollment-id');
+                const inputs = qsa('input.grade-input', row);
+                if (!enroll || inputs.length === 0) { return; }
                 data[enroll] = {};
-                qsa('input.grade-input', row).forEach(inp => {
+                inputs.forEach(inp => {
                     const aid = inp.getAttribute('data-assessment-id');
                     data[enroll][aid] = { grade: inp.value.trim() };
                 });

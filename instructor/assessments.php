@@ -480,6 +480,18 @@ if ($courseId > 0) {
             background: #f8f9fa;
         }
 
+        /* Period indicator row */
+        .period-banner {
+            text-align: center;
+            background: #f3e8ff;
+            color: #6a0dad;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            border-top: 2px solid #6a0dad;
+            border-bottom: 2px solid #6a0dad;
+        }
+
         /* Remaining percentage styling under period line */
         .remaining-text {
             display: block;
@@ -671,7 +683,15 @@ if ($courseId > 0) {
                                 </tr>
                             </thead>
                             <tbody>
+                                <?php $lastPeriod = null; ?>
                                 <?php foreach ($criteria as $criterion): ?>
+                                    <?php
+                                        $p = strtolower($criterion['period'] ?? '');
+                                        if ($p !== $lastPeriod) {
+                                            echo '<tr><td colspan="5" class="period-banner">' . htmlspecialchars(strtoupper($criterion['period'])) . '</td></tr>';
+                                            $lastPeriod = $p;
+                                        }
+                                    ?>
                                     <!-- Criteria Row -->
                                     <tr style="background: #f8f9ff; border-top: 2px solid #6a0dad;">
                                         <td style="font-weight: 600; color: #6a0dad;">Criteria</td>

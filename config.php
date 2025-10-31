@@ -15,12 +15,13 @@ define('SITE_NAME', 'College Grading System');
 // Update SITE_URL to match your local environment
 define('SITE_URL', (isset($_SERVER['HTTP_HOST']) ? (isset($_SERVER['REQUEST_SCHEME']) ? $_SERVER['REQUEST_SCHEME'] : 'http') . '://' . $_SERVER['HTTP_HOST'] : 'http://localhost'));
 
-// SMTP placeholders (set real values in a local include not checked into git)
-if (!defined('SMTP_HOST')) define('SMTP_HOST', 'smtp.example.com');
-if (!defined('SMTP_PORT')) define('SMTP_PORT', 587);
-if (!defined('SMTP_USER')) define('SMTP_USER', 'user@example.com');
-if (!defined('SMTP_PASS')) define('SMTP_PASS', 'password');
-if (!defined('SMTP_FROM')) define('SMTP_FROM', 'no-reply@example.com');
+// SMTP configuration (PHPMailer). Defaults set for Gmail using the provided admin mailbox.
+// For production, move secrets to env vars or a non-committed local include.
+if (!defined('SMTP_HOST')) define('SMTP_HOST', getenv('SMTP_HOST') ?: 'smtp.gmail.com');
+if (!defined('SMTP_PORT')) define('SMTP_PORT', getenv('SMTP_PORT') ?: 587);
+if (!defined('SMTP_USER')) define('SMTP_USER', getenv('SMTP_USER') ?: 'ascbtvet@gmail.com');
+if (!defined('SMTP_PASS')) define('SMTP_PASS', getenv('SMTP_PASS') ?: 'admin123');
+if (!defined('SMTP_FROM')) define('SMTP_FROM', getenv('SMTP_FROM') ?: 'ascbtvet@gmail.com');
 if (!defined('SMTP_FROM_NAME')) define('SMTP_FROM_NAME', SITE_NAME);
 
 // Database connection settings

@@ -305,3 +305,43 @@ function find_program_id(PDO $pdo, $programInput) {
 }
 
 ?>
+<?php
+/**
+ * LEE grading helpers
+ * Map percent to LEE grade using provided bands; compute remarks from LEE average.
+ */
+function lee_from_percent(?float $percent) {
+    if ($percent === null) return null;
+    $p = floatval($percent);
+    if ($p >= 95) return 1.0;
+    if ($p == 94) return 1.1;
+    if ($p == 93) return 1.2;
+    if ($p == 92) return 1.3;
+    if ($p == 91) return 1.4;
+    if ($p == 90) return 1.5;
+    if ($p == 89) return 1.6;
+    if ($p == 88) return 1.7;
+    if ($p == 87) return 1.8;
+    if ($p == 86) return 1.9;
+    if ($p == 85) return 2.0;
+    if ($p == 84) return 2.1;
+    if ($p == 83) return 2.2;
+    if ($p == 82) return 2.3;
+    if ($p == 81) return 2.4;
+    if ($p == 80) return 2.5;
+    if ($p == 79) return 2.6;
+    if ($p == 78) return 2.7;
+    if ($p == 77) return 2.8;
+    if ($p == 76) return 2.9;
+    if ($p == 75) return 3.0;
+    if ($p < 75) return 5.0; // Failed
+    return 1.0; // default for >100 guard (treat as top)
+}
+
+function lee_remarks(?float $leeAverage) {
+    if ($leeAverage === null) return ['Incomplete', 'text-secondary'];
+    if ($leeAverage <= 3.0) return ['Passed', 'text-success'];
+    if ($leeAverage > 3.0 && $leeAverage < 5.0) return ['Conditional', 'text-warning'];
+    if ($leeAverage >= 5.0) return ['Failed', 'text-danger'];
+    return ['Incomplete', 'text-secondary'];
+}

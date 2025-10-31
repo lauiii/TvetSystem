@@ -9,8 +9,12 @@
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-// Load Composer's autoloader (adjust path as needed)
-// require '../vendor/autoload.php';
+// Load Composer's autoloader (adjust path as needed). Try common paths.
+if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+} elseif (file_exists(__DIR__ . '/../../vendor/autoload.php')) {
+    require_once __DIR__ . '/../../vendor/autoload.php';
+}
 
 // Define email helpers: use PHPMailer if available, otherwise provide lightweight fallbacks.
 if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
@@ -87,6 +91,40 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             return true;
         } catch (Exception $e) {
             error_log("Notification email failed: " . ($mail->ErrorInfo ?? $e->getMessage()));
+            return false;
+        }
+    }
+
+    /**
+     * Send HTML email with a single in-memory attachment (e.g., CSV or PDF)
+     */
+    function sendEmailWithAttachment($email, $firstName, $subject, $html, $attachmentName, $attachmentContent, $mime = 'text/csv') {
+        try {
+            $mail = new PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host = SMTP_HOST;
+            $mail->SMTPAuth = true;
+            $mail->Username = SMTP_USER;
+            $mail->Password = SMTP_PASS;
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port = SMTP_PORT;
+
+            $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
+            $mail->addAddress($email, $firstName);
+
+            $mail->isHTML(true);
+            $mail->Subject = $subject;
+            $mail->Body = $html;
+            $mail->AltBody = strip_tags($html);
+
+            if (!empty($attachmentContent)) {
+                $mail->addStringAttachment($attachmentContent, $attachmentName, 'base64', $mime);
+            }
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Attachment email failed: " . ($mail->ErrorInfo ?? $e->getMessage()));
             return false;
         }
     }

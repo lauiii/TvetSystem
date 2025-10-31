@@ -10,7 +10,11 @@ h1 { margin:0; font-size:1.25rem; color:#9b25e7 }
 .grades-grid { display:flex; gap:20px; margin-top:18px; }
 .left { flex:1 1 700px; }
 .right { width:320px; }
-table.grades { width:100%; border-collapse:collapse; border:1px solid #d2b7ff; }
+/* Responsive table container */
+.left > div { max-width:100%; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
+
+/* Table sizing: fill card but allow horizontal scroll when needed */
+table.grades { width:max-content; min-width:100%; border-collapse:collapse; border:1px solid #d2b7ff; table-layout:auto; }
 table.grades th, table.grades td { padding:8px 10px; border:1px solid #d2b7ff; text-align:center; }
 /* Flat header color (no gradients) */
 table.grades th { background:#9b25e7; color:#fff; text-align:center; font-weight:600; }
@@ -31,4 +35,25 @@ input.grade-input { width:100%; padding:6px 8px; border:1px solid #d2b7ff; borde
 .summary { background:#f5ebff; padding:12px; border-radius:8px; border:1px solid #d2b7ff; }
 .small { font-size:0.95rem; color:#5b3a8a; }
 .tentative-cell, .final-cell { padding:8px 10px; }
+.text-success { color:#28a745; }
+.text-warning { color:#ffc107; }
+.text-danger { color:#dc3545; }
+.text-secondary { color:#6c757d; }
 @media (max-width:900px) { .grades-grid { flex-direction:column; } .right { width:100%; } }
+
+/* Compact headings/cells to improve fit */
+@media (max-width: 1200px) {
+  table.grades th, table.grades td { padding:6px 8px; }
+  .small { font-size:0.85rem; }
+}
+
+/* --- Responsive containment overrides per request --- */
+.grades-grid { display:flex; flex-direction:column; width:100%; overflow-x:auto; padding:10px; box-sizing:border-box; }
+.grades-grid .left { width:100%; overflow-x:auto; }
+table.grades { width:100%; min-width:1200px; table-layout:auto; }
+table.grades th, table.grades td { white-space:nowrap; border-color:#d2b7ff; }
+.page { width:100%; max-width:100%; overflow-x:hidden; }
+
+/* Period sections spacing and focus highlight for quick jump */
+.period-table-wrap { margin-bottom:16px; }
+.period-table-wrap.active { outline:2px solid #9b25e7; outline-offset: 2px; border-radius:8px; }
