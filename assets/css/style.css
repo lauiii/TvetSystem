@@ -1,0 +1,23 @@
+:root{
+    --violet:#6a0dad;
+    --violet-2:#9b59b6;
+    --muted:#6c6c6c;
+    --bg:#f6f6fb;
+}
+*{box-sizing:border-box}
+body{font-family:Segoe UI,Helvetica,Arial,sans-serif;background:var(--bg);color:#222;margin:0}
+.btn{display:inline-block;padding:10px 16px;border-radius:8px;text-decoration:none;color:#fff;background:linear-gradient(135deg,var(--violet),var(--violet-2));border:none;cursor:pointer}
+.btn.primary{background:linear-gradient(135deg,var(--violet),var(--violet-2));}
+.container{padding:20px}
+h1{color:var(--violet);margin-bottom:12px}
+.card{background:#fff;padding:20px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05)}
+/* Responsive sidebar + cards would be added in full UI; this file is a small theme starter */
+
+/* Tables */
+.table{width:100%;border-collapse:collapse}
+.table th,.table td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+
+/* small screens */
+@media (max-width:720px){
+    .container{padding:12px}
+}
