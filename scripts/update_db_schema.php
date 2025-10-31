@@ -132,6 +132,31 @@ try {
         // Ignore if foreign key already exists
     }
 
+    // Normalize and de-duplicate assessment criteria and items, then enforce uniqueness with generated columns
+    echo "\nNormalizing and enforcing uniqueness on assessment criteria/items...\n";
+
+    // 1) Remove exact duplicates by keeping the lowest id per (course_id, period, name_norm)
+    try {
+        // Create generated column name_norm if not exists
+        try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN name_norm VARCHAR(100) GENERATED ALWAYS AS (LOWER(TRIM(name))) STORED"); } catch(Exception $e) {}
+        // Add unique key if not exists
+        try { $pdo->exec("ALTER TABLE assessment_criteria ADD UNIQUE KEY unique_criteria (course_id, period, name_norm)"); } catch(Exception $e) {}
+
+        // Delete duplicates (keep smallest id)
+        $pdo->exec("DELETE ac1 FROM assessment_criteria ac1 INNER JOIN assessment_criteria ac2 ON ac1.course_id = ac2.course_id AND ac1.period = ac2.period AND LOWER(TRIM(ac1.name)) = LOWER(TRIM(ac2.name)) AND ac1.id > ac2.id");
+    } catch(Exception $e) {
+        echo "Criteria normalization note: " . $e->getMessage() . "\n";
+    }
+
+    // 2) Items: generated column + unique key and cleanup
+    try {
+        try { $pdo->exec("ALTER TABLE assessment_items ADD COLUMN name_norm VARCHAR(100) GENERATED ALWAYS AS (LOWER(TRIM(name))) STORED"); } catch(Exception $e) {}
+        try { $pdo->exec("ALTER TABLE assessment_items ADD UNIQUE KEY unique_item (criteria_id, name_norm)"); } catch(Exception $e) {}
+        $pdo->exec("DELETE ai1 FROM assessment_items ai1 INNER JOIN assessment_items ai2 ON ai1.criteria_id = ai2.criteria_id AND LOWER(TRIM(ai1.name)) = LOWER(TRIM(ai2.name)) AND ai1.id > ai2.id");
+    } catch(Exception $e) {
+        echo "Items normalization note: " . $e->getMessage() . "\n";
+    }
+
     // Add missing columns to programs table
     $pdo->exec("ALTER TABLE programs ADD COLUMN IF NOT EXISTS code VARCHAR(20) UNIQUE AFTER name");
     $pdo->exec("ALTER TABLE programs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER description");

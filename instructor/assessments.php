@@ -252,37 +252,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
-// Get criteria and items for selected course
+// ✅ Fixed version — prevents duplicated criteria
 $criteria = [];
 if ($courseId > 0) {
-    // Preserve insertion order so criteria appear in the order they were created by the instructor
+    // Step 1: Fetch all criteria for this course (one row per criteria)
     $stmt = $pdo->prepare("
-        SELECT ac.*, COUNT(ai.id) as item_count
-        FROM assessment_criteria ac
-        LEFT JOIN assessment_items ai ON ac.id = ai.criteria_id
-        WHERE ac.course_id = ?
-        GROUP BY ac.id
-        ORDER BY ac.id ASC
+        SELECT id, name, period, percentage
+        FROM assessment_criteria
+        WHERE course_id = ?
+        ORDER BY period, id ASC
     ");
     $stmt->execute([$courseId]);
     $criteria = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    // Debug logging: record what criteria were fetched for this course to help diagnose UI duplication issues
-    try {
-        $debugLog = date('c') . " | [debug] fetched criteria for course_id={$courseId}, count=" . count($criteria) . "\n";
-        foreach ($criteria as $c) {
-            $debugLog .= " - id=" . ($c['id'] ?? 'NULL') . ", name=" . ($c['name'] ?? '') . ", period=" . ($c['period'] ?? '') . ", percentage=" . ($c['percentage'] ?? '') . "\n";
-        }
-        @file_put_contents(__DIR__ . '/../logs/grades_errors.log', $debugLog, FILE_APPEND);
-    } catch (Exception $e) { /* ignore logging failures */ }
 
-    // Get items for each criteria
-    foreach ($criteria as &$criterion) {
-        // Preserve insertion order so newly added items appear in the order they were added.
-        // Use id ASC which is the auto-increment primary key (insertion order) instead of alphabetical name sorting.
-        $itemStmt = $pdo->prepare("SELECT * FROM assessment_items WHERE criteria_id = ? ORDER BY id ASC");
-        $itemStmt->execute([$criterion['id']]);
-        $criterion['items'] = $itemStmt->fetchAll(PDO::FETCH_ASSOC);
+    // Optional debug
+    try {
+        $debugLog = date('c') . " | [criteria] course_id={$courseId}, count=" . count($criteria) . "\n";
+        @file_put_contents(__DIR__ . '/../logs/grades_errors.log', $debugLog, FILE_APPEND);
+    } catch (Exception $e) { /* ignore */ }
+
+    // Step 2: Attach all assessment items per criteria
+    foreach ($criteria as &$c) {
+        $stmt2 = $pdo->prepare("
+            SELECT id, name, total_score
+            FROM assessment_items
+            WHERE criteria_id = ?
+            ORDER BY id ASC
+        ");
+        $stmt2->execute([$c['id']]);
+        $c['items'] = $stmt2->fetchAll(PDO::FETCH_ASSOC);
     }
+    unset($c);
 }
 
 ?>

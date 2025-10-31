@@ -39,3 +39,162 @@
 2025-10-31T07:23:10+01:00 | [debug] fetched criteria for course_id=26, count=2
  - id=86, name=Exam, period=prelim, percentage=10.00
  - id=87, name=Quiz, period=midterm, percentage=10.00
+2025-10-31T07:59:21+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=86, name=Exam, period=prelim, percentage=10.00
+ - id=87, name=Quiz, period=midterm, percentage=10.00
+2025-10-31T07:59:32+01:00 | [debug] fetched criteria for course_id=26, count=3
+ - id=86, name=Exam, period=prelim, percentage=10.00
+ - id=87, name=Quiz, period=midterm, percentage=10.00
+ - id=88, name=Quiz, period=prelim, percentage=4.00
+2025-10-31T08:02:57+01:00 | [debug] fetched criteria for course_id=26, count=3
+ - id=86, name=Exam, period=prelim, percentage=10.00
+ - id=87, name=Quiz, period=midterm, percentage=10.00
+ - id=88, name=Quiz, period=prelim, percentage=4.00
+2025-10-31T08:05:10+01:00 | [manage-grades] section_id=63, course_id=26, assessments=0, displayAssessments=0
+2025-10-31T08:05:15+01:00 | [debug] fetched criteria for course_id=26, count=3
+ - id=86, name=Exam, period=prelim, percentage=10.00
+ - id=87, name=Quiz, period=midterm, percentage=10.00
+ - id=88, name=Quiz, period=prelim, percentage=4.00
+2025-10-31T08:05:20+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=87, name=Quiz, period=midterm, percentage=10.00
+ - id=88, name=Quiz, period=prelim, percentage=4.00
+2025-10-31T08:05:23+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=88, name=Quiz, period=prelim, percentage=4.00
+2025-10-31T08:05:26+01:00 | [debug] fetched criteria for course_id=26, count=0
+2025-10-31T08:05:38+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=89, name=Exam, period=prelim, percentage=20.00
+2025-10-31T08:05:59+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=89, name=Exam, period=prelim, percentage=20.00
+2025-10-31T08:06:04+01:00 | [manage-grades] section_id=63, course_id=26, assessments=1, displayAssessments=1
+2025-10-31T08:06:25+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=89, name=Exam, period=prelim, percentage=20.00
+2025-10-31T08:06:36+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=89, name=Exam, period=prelim, percentage=20.00
+ - id=90, name=Exam, period=midterm, percentage=20.00
+2025-10-31T08:07:17+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=90, name=Exam, period=midterm, percentage=20.00
+2025-10-31T08:07:29+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=90, name=Exam, period=midterm, percentage=20.00
+2025-10-31T08:07:45+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=90, name=Exam, period=midterm, percentage=20.00
+ - id=91, name=Quiz, period=prelim, percentage=20.00
+2025-10-31T08:09:53+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=90, name=Exam, period=midterm, percentage=20.00
+ - id=91, name=Quiz, period=prelim, percentage=20.00
+2025-10-31T08:09:58+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=91, name=Quiz, period=prelim, percentage=20.00
+2025-10-31T08:10:13+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=91, name=Quiz, period=prelim, percentage=20.00
+ - id=92, name=Exam, period=finals, percentage=20.00
+2025-10-31T08:10:38+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=92, name=Exam, period=finals, percentage=20.00
+2025-10-31T08:10:42+01:00 | [debug] fetched criteria for course_id=26, count=0
+2025-10-31T08:10:52+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=93, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:11:05+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=93, name=Quiz, period=prelim, percentage=10.00
+ - id=94, name=Exam, period=prelim, percentage=15.00
+2025-10-31T08:13:51+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=93, name=Quiz, period=prelim, percentage=10.00
+ - id=94, name=Exam, period=prelim, percentage=15.00
+2025-10-31T08:13:55+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=94, name=Exam, period=prelim, percentage=15.00
+2025-10-31T08:13:59+01:00 | [debug] fetched criteria for course_id=26, count=0
+2025-10-31T08:14:22+01:00 | [add_criteria] course_id=26 name='Exam' period='prelim' percentage=10 by instructor=157
+2025-10-31T08:14:22+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=95, name=Exam, period=prelim, percentage=10.00
+2025-10-31T08:14:36+01:00 | [add_criteria] course_id=26 name='Quiz' period='midterm' percentage=20 by instructor=157
+2025-10-31T08:14:36+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:14:51+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:14:57+01:00 | [manage-grades] section_id=63, course_id=26, assessments=0, displayAssessments=0
+2025-10-31T08:15:01+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:15:11+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:15:25+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:15:43+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:15:48+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:17:14+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:17:16+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:19:31+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:19:37+01:00 | Failed to process grades: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails (`college_grading_system`.`grades`, CONSTRAINT `grades_ibfk_2` FOREIGN KEY (`assessment_id`) REFERENCES `assessments` (`id`) ON DELETE CASCADE)
+Payload: {"376":{"82":{"grade":"100"},"83":{"grade":""},"84":{"grade":""}}}
+2025-10-31T08:19:43+01:00 | Failed to process grades: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails (`college_grading_system`.`grades`, CONSTRAINT `grades_ibfk_2` FOREIGN KEY (`assessment_id`) REFERENCES `assessments` (`id`) ON DELETE CASCADE)
+Payload: {"376":{"82":{"grade":"100"},"83":{"grade":""},"84":{"grade":""}}}
+2025-10-31T08:19:45+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:19:47+01:00 | Failed to process grades: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails (`college_grading_system`.`grades`, CONSTRAINT `grades_ibfk_2` FOREIGN KEY (`assessment_id`) REFERENCES `assessments` (`id`) ON DELETE CASCADE)
+Payload: {"376":{"82":{"grade":""},"83":{"grade":""},"84":{"grade":""}}}
+2025-10-31T08:19:53+01:00 | Failed to process grades: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails (`college_grading_system`.`grades`, CONSTRAINT `grades_ibfk_2` FOREIGN KEY (`assessment_id`) REFERENCES `assessments` (`id`) ON DELETE CASCADE)
+Payload: {"376":{"82":{"grade":""},"83":{"grade":""},"84":{"grade":""}}}
+2025-10-31T08:22:51+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:23:00+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:23:01+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:38:17+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:39:13+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:39:37+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:39:58+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:40:21+01:00 | [manage-grades] section_id=63, course_id=26, assessments=3, displayAssessments=3
+2025-10-31T08:40:41+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=95, name=Exam, period=prelim, percentage=10.00
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:40:52+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:41:14+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:41:20+01:00 | [manage-grades] section_id=63, course_id=26, assessments=1, displayAssessments=1
+2025-10-31T08:41:36+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+2025-10-31T08:41:52+01:00 | [add_criteria] course_id=26 name='Quiz' period='prelim' percentage=10 by instructor=157
+2025-10-31T08:41:52+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+ - id=97, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:46:47+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=96, name=Quiz, period=midterm, percentage=20.00
+ - id=97, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:46:51+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=97, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:46:55+01:00 | [debug] fetched criteria for course_id=26, count=0
+2025-10-31T08:47:04+01:00 | [add_criteria] course_id=26 name='Exam' period='prelim' percentage=10 by instructor=157
+2025-10-31T08:47:04+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=98, name=Exam, period=prelim, percentage=10.00
+2025-10-31T08:47:19+01:00 | [add_criteria] course_id=26 name='Quiz' period='prelim' percentage=10 by instructor=157
+2025-10-31T08:47:19+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=98, name=Exam, period=prelim, percentage=10.00
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:47:32+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=98, name=Exam, period=prelim, percentage=10.00
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:47:34+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=98, name=Exam, period=prelim, percentage=10.00
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T08:47:41+01:00 | [manage-grades] section_id=63, course_id=26, assessments=0, displayAssessments=0
+2025-10-31T09:49:34+01:00 | [manage-grades] section_id=63, course_id=26, assessments=0, displayAssessments=0
+2025-10-31T09:49:38+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=98, name=Exam, period=prelim, percentage=10.00
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T09:49:46+01:00 | [debug] fetched criteria for course_id=26, count=1
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+2025-10-31T09:50:03+01:00 | [add_criteria] course_id=26 name='Quiz' period='midterm' percentage=10 by instructor=157
+2025-10-31T09:50:03+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+ - id=100, name=Quiz, period=midterm, percentage=10.00
+2025-10-31T09:50:07+01:00 | [debug] fetched criteria for course_id=26, count=2
+ - id=99, name=Quiz, period=prelim, percentage=10.00
+ - id=100, name=Quiz, period=midterm, percentage=10.00
+2025-10-31T10:09:57+01:00 | [criteria] course_id=26, count=2
+2025-10-31T10:10:04+01:00 | [criteria] course_id=26, count=1
+2025-10-31T10:10:20+01:00 | [criteria] course_id=26, count=2

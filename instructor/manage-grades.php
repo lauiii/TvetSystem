@@ -111,7 +111,15 @@ function processGrades($pdo, $gradesPayload)
 $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') || isset($_POST['ajax']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
-    $result = processGrades($pdo, isset($_POST['grades']) ? $_POST['grades'] : []);
+    // Accept both classic form (grades[]) and AJAX (grades_json) payloads
+    $payload = [];
+    if ($isAjax && !empty($_POST['grades_json'])) {
+        $decoded = json_decode($_POST['grades_json'], true);
+        if (is_array($decoded)) { $payload = $decoded; }
+    } elseif (isset($_POST['grades']) && is_array($_POST['grades'])) {
+        $payload = $_POST['grades'];
+    }
+    $result = processGrades($pdo, $payload);
     if ($isAjax) {
         // attach assessment averages to AJAX response for client refresh
         // compute updated averages
@@ -134,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
 
 // Fetch assessments for this course
 $stmt = $pdo->prepare(
-    "SELECT ai.id, ai.name, ai.total_score, ac.name as criteria_name, ac.period, ac.percentage
+    "SELECT ai.id, ai.name, ai.total_score, ac.id as criteria_id, ac.name as criteria_name, ac.period, ac.percentage
     FROM assessment_items ai
     INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
     WHERE ac.course_id = ?
@@ -191,7 +199,8 @@ $grouped = []; // ['Prelim'=>['criteria'=>['Exam'=>['assessments'=>[...] , 'perc
 $totalPossible = 0.0;
 foreach ($assessments as $a) {
     $period = $a['period'] ?: 'Unspecified';
-    $criteria = $a['criteria_name'] ?: 'General';
+    $criteriaId = isset($a['criteria_id']) ? (int)$a['criteria_id'] : 0;
+    $criteriaName = $a['criteria_name'] ?: 'General';
     $assess = [
         'id' => (int)$a['id'],
         'name' => $a['name'],
@@ -202,14 +211,20 @@ foreach ($assessments as $a) {
         $grouped[$period] = ['criteria' => [], 'period_percentage' => 0.0, 'possible' => 0.0];
     }
 
-    // set criteria percentage (only set once if present)
-    if (!isset($grouped[$period]['criteria'][$criteria])) {
-        $grouped[$period]['criteria'][$criteria] = ['assessments' => [], 'percentage' => floatval($a['percentage'])];
-        // accumulate period percentage
+    // set criteria bucket keyed by unique criteria id to avoid merging criteria with same name
+    if (!isset($grouped[$period]['criteria'][$criteriaId])) {
+        $grouped[$period]['criteria'][$criteriaId] = [
+            'name' => $criteriaName,
+            'assessments' => [],
+            'percentage' => floatval($a['percentage']),
+            'possible' => 0.0
+        ];
+        // accumulate period percentage once per distinct criteria
         $grouped[$period]['period_percentage'] += floatval($a['percentage']);
     }
 
-    $grouped[$period]['criteria'][$criteria]['assessments'][] = $assess;
+    $grouped[$period]['criteria'][$criteriaId]['assessments'][] = $assess;
+    $grouped[$period]['criteria'][$criteriaId]['possible'] += $assess['max'];
     $grouped[$period]['possible'] += $assess['max'];
     $totalPossible += $assess['max'];
 }
@@ -217,9 +232,14 @@ foreach ($assessments as $a) {
 // Flatten assessments in display order (periods -> criteria -> assessments)
 $displayAssessments = [];
 foreach ($grouped as $periodName => $periodData) {
-    foreach ($periodData['criteria'] as $criteriaName => $cdata) {
+    foreach ($periodData['criteria'] as $criteriaId => $cdata) {
         foreach ($cdata['assessments'] as $ass) {
-            $displayAssessments[] = array_merge($ass, ['period' => $periodName, 'criteria' => $criteriaName, 'criteria_percentage' => $cdata['percentage']]);
+            $displayAssessments[] = array_merge($ass, [
+                'period' => $periodName,
+                'criteria' => $cdata['name'],
+                'criteria_id' => (int)$criteriaId,
+                'criteria_percentage' => $cdata['percentage']
+            ]);
         }
     }
 }
@@ -231,8 +251,24 @@ foreach ($grouped as $pname => $pdata) {
     $periodMeta[$pname] = ['percentage' => $pdata['period_percentage'], 'possible' => $pdata['possible']];
 }
 foreach ($displayAssessments as $a) {
-    $assessmentMeta[] = ['id' => (int)$a['id'], 'name' => $a['name'], 'max' => $a['max'], 'period' => $a['period'], 'criteria' => $a['criteria'], 'criteria_percentage' => $a['criteria_percentage']];
+    $assessmentMeta[] = [
+        'id' => (int)$a['id'],
+        'name' => $a['name'],
+        'max' => $a['max'],
+        'period' => $a['period'],
+        'criteria' => $a['criteria'],
+        'criteria_id' => isset($a['criteria_id']) ? (int)$a['criteria_id'] : null,
+        'criteria_percentage' => $a['criteria_percentage']
+    ];
 }
+
+// Debug: log assessment availability for this section/course
+try {
+    $dbg = date('c') . " | [manage-grades] section_id=" . ($section['id'] ?? 'n/a') . ", course_id=" . ($section['course_id'] ?? 'n/a') . ", assessments=" . count($assessments) . ", displayAssessments=" . count($displayAssessments) . "\n";
+    @file_put_contents(__DIR__ . '/../logs/grades_errors.log', $dbg, FILE_APPEND);
+} catch (Exception $e) { /* ignore */ }
+
+$hasAssessments = count($displayAssessments) > 0;
 
 ?>
 <!doctype html>
@@ -274,9 +310,11 @@ foreach ($displayAssessments as $a) {
                                 ?>
                                 <tr>
                                     <th rowspan="3">Student</th>
-                                    <?php foreach ($grouped as $pname => $pdata): ?>
-                                        <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars($pname); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
-                                    <?php endforeach; ?>
+                                    <?php if ($hasAssessments): ?>
+                                        <?php foreach ($grouped as $pname => $pdata): ?>
+                                            <th colspan="<?php echo intval($periodColCounts[$pname]); ?>"><?php echo htmlspecialchars($pname); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                     <th rowspan="3">Tentative (%)</th>
                                     <th rowspan="3">Final (%)</th>
                                 </tr>
@@ -284,20 +322,31 @@ foreach ($displayAssessments as $a) {
                                 ?>
                                 <tr>
                                     <?php foreach ($grouped as $pname => $pdata):
-                                        foreach ($pdata['criteria'] as $cname => $cdata):
+                                        foreach ($pdata['criteria'] as $cid => $cdata):
                                             $cspan = count($cdata['assessments']); ?>
-                                            <th colspan="<?php echo intval($cspan); ?>"><?php echo htmlspecialchars($cname); ?><br><small class="small"><?php echo number_format($cdata['percentage'],2); ?>%</small></th>
+                                            <th colspan="<?php echo intval($cspan); ?>"><?php echo htmlspecialchars($cdata['name']); ?><br><small class="small"><?php echo number_format($cdata['percentage'],2); ?>% · Total: <?php echo htmlspecialchars(number_format($cdata['possible'], 2)); ?> pts</small></th>
                                     <?php endforeach; endforeach; ?>
                                 </tr>
                                 <?php // Third header: individual assessments
                                 ?>
                                 <tr>
-                                    <?php foreach ($displayAssessments as $a): ?>
-                                        <th data-assessment-id="<?php echo (int)$a['id']; ?>"><?php echo htmlspecialchars($a['name']); ?><br><small class="small">Max: <?php echo htmlspecialchars(number_format($a['max'],2)); ?></small></th>
-                                    <?php endforeach; ?>
+                                    <?php if ($hasAssessments): ?>
+                                        <?php foreach ($displayAssessments as $a): ?>
+                                            <th data-assessment-id="<?php echo (int)$a['id']; ?>"><?php echo htmlspecialchars($a['name']); ?><br><small class="small">Max: <?php echo htmlspecialchars(number_format($a['max'],2)); ?></small></th>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                 </tr>
                             </thead>
                             <tbody>
+                                <?php if (!$hasAssessments): ?>
+                                    <tr>
+                                        <td colspan="3" style="color:#666;">
+                                            No assessments found for this course. Please create criteria and items first.
+                                            <br>
+                                            <a class="small" href="assessments.php?course_id=<?php echo (int)$section['course_id']; ?>">Go to Manage Assessments</a>
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
                                 <?php foreach ($students as $student): $enroll = $student['enrollment_id']; ?>
                                     <tr data-enrollment-id="<?php echo $enroll; ?>">
                                         <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'] . ', ' . $student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
