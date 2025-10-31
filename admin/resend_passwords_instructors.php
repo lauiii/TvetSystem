@@ -1,6 +1,6 @@
 <?php
 /**
- * Admin — Resend Passwords to Students
+ * Admin — Resend Passwords to Instructors (Option B: generate temp password)
  */
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../include/functions.php';
@@ -15,11 +15,7 @@ $userCols = [];
 try { $userCols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $userCols = []; }
 $has = function($c) use ($userCols) { return in_array($c, $userCols); };
 
-// Email column
-$emailCol = null; foreach (['email','user_email','username'] as $c) { if ($has($c)) { $emailCol = $c; break; } }
-if (!$emailCol) { $emailCol = 'email'; }
-
-// Name columns
+$emailCol = $has('email') ? 'email' : ($has('user_email') ? 'user_email' : 'email');
 $firstCol = $has('first_name') ? 'first_name' : null; $lastCol = $has('last_name') ? 'last_name' : null; $nameCol = $has('name') ? 'name' : null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -38,23 +34,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $okCount = 0; $fail = 0;
         foreach ($ids as $uid) {
             try {
-                $stmt = $pdo->prepare("SELECT id, student_id, $emailCol AS email" .
+                $stmt = $pdo->prepare("SELECT id, $emailCol AS email" .
                     ($firstCol? ", $firstCol AS first_name" : '') .
                     ($lastCol? ", $lastCol AS last_name" : '') .
                     ($nameCol? ", $nameCol AS full_name" : '') .
-                    " FROM users WHERE id = ? AND role = 'student' AND status = 'active' LIMIT 1");
+                    " FROM users WHERE id = ? AND role = 'instructor' AND status = 'active' LIMIT 1");
                 $stmt->execute([$uid]);
                 $u = $stmt->fetch();
                 if (!$u || empty($u['email'])) { $fail++; continue; }
-                $fname = '';
-                if (!empty($u['first_name']) || !empty($u['last_name'])) { $fname = trim(($u['first_name'] ?? '') . ' ' . ($u['last_name'] ?? '')); }
-                if (!$fname) { $fname = $u['full_name'] ?? 'Student'; }
-                // Generate new temp password and update DB
+                $name = (!empty($u['first_name']) || !empty($u['last_name'])) ? trim(($u['first_name'] ?? '') . ' ' . ($u['last_name'] ?? '')) : ($u['full_name'] ?? 'Instructor');
+                // Generate temp password and update
                 $newPass = generate_password(10);
                 $hash = hash_password($newPass);
                 $pdo->prepare('UPDATE users SET password = ? WHERE id = ?')->execute([$hash, $uid]);
-                // Email credentials
-                $sent = sendStudentCredentials($u['email'], $fname, $u['student_id'] ?? '', $newPass);
+                // Email
+                $sent = sendInstructorCredentials($u['email'], $name, $newPass);
                 if ($sent) { $okCount++; } else { $fail++; }
             } catch (Exception $e) { $fail++; }
         }
@@ -62,19 +56,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Build listing
-$where = "WHERE role='student'";
+$where = "WHERE role='instructor'";
 $params = [];
 if ($q !== '') {
     $parts = [];
-    if ($has('student_id')) $parts[] = "student_id LIKE :q";
     if ($has('email')) $parts[] = "email LIKE :q";
     if ($has('first_name')) $parts[] = "first_name LIKE :q";
     if ($has('last_name')) $parts[] = "last_name LIKE :q";
     if ($has('name')) $parts[] = "name LIKE :q";
     if ($parts) { $where .= ' AND (' . implode(' OR ', $parts) . ')'; $params[':q'] = "%$q%"; }
 }
-$sql = "SELECT id, student_id, $emailCol AS email" .
+$sql = "SELECT id, $emailCol AS email" .
        ($firstCol? ", $firstCol AS first_name" : '') .
        ($lastCol? ", $lastCol AS last_name" : '') .
        ($nameCol? ", $nameCol AS full_name" : '') .
@@ -87,30 +79,30 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Resend Passwords — Admin</title>
+    <title>Resend Passwords — Instructors</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
 </head>
 <body>
 <div class="admin-layout">
-    <?php $active = 'students'; require __DIR__ . '/inc/sidebar.php'; ?>
+    <?php $active = 'instructors'; require __DIR__ . '/inc/sidebar.php'; ?>
     <main class="main-content">
         <div class="container">
-            <?php $pageTitle = 'Resend Passwords'; require __DIR__ . '/inc/header.php'; ?>
+            <?php $pageTitle = 'Resend Instructor Passwords'; require __DIR__ . '/inc/header.php'; ?>
             <div class="card">
                 <?php if ($error): ?><div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
                 <?php if ($success): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
-                    <div class="resend-head" style="margin-bottom:10px;">
+                <div class="resend-head" style="margin-bottom:10px;">
                     <div class="title" style="font-weight:700; color:#6a0dad;">Resend Passwords</div>
-                    <div class="sub" style="color:#555; font-size:13px;">Generate a new temporary password and email it to selected students.</div>
+                    <div class="sub" style="color:#555; font-size:13px;">Generate a new temporary password and email it to selected instructors.</div>
                 </div>
                 <form method="GET" class="resend-search" style="display:flex; gap:12px; align-items:end; margin-bottom:12px; flex-wrap:wrap;">
                     <div style="flex:1; min-width:260px;">
                         <label style="display:block; font-size:12px; color:#555;">Search</label>
-                        <input name="q" class="search-input" value="<?php echo htmlspecialchars($q); ?>" placeholder="Search by name, email, student ID">
+                        <input name="q" class="search-input" value="<?php echo htmlspecialchars($q); ?>" placeholder="Search by name or email">
                     </div>
                     <button class="btn primary" type="submit">Search</button>
                 </form>
-                    <div class="resend-toolbar" style="display:flex; justify-content:space-between; align-items:center; gap:10px; background:#f8f5ff; border:1px solid #eadcff; padding:10px 12px; border-radius:8px; margin-bottom:10px;">
+                <div class="resend-toolbar" style="display:flex; justify-content:space-between; align-items:center; gap:10px; background:#f8f5ff; border:1px solid #eadcff; padding:10px 12px; border-radius:8px; margin-bottom:10px;">
                     <div><span class="pill" id="selCount" style="display:inline-block; background:#6a0dad; color:#fff; border-radius:999px; padding:4px 10px; font-weight:600;">0 selected</span></div>
                     <div style="display:flex; gap:8px;">
                         <button class="btn secondary" type="button" onclick="toggleAll(true)">Select All</button>
@@ -125,7 +117,6 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <thead>
                                 <tr>
                                     <th><input type="checkbox" id="masterCb"></th>
-                                    <th>Student ID</th>
                                     <th>Name</th>
                                     <th>Email</th>
                                     <th>Actions</th>
@@ -136,7 +127,6 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <?php $name = (!empty($r['first_name'])||!empty($r['last_name'])) ? trim(($r['first_name']??'').' '.($r['last_name']??'')) : ($r['full_name']??''); $hasEmail = !empty($r['email']); ?>
                                     <tr>
                                         <td><input type="checkbox" class="sel" name="ids[]" value="<?php echo (int)$r['id']; ?>" <?php echo $hasEmail ? '' : 'disabled'; ?>></td>
-                                        <td><?php echo htmlspecialchars($r['student_id'] ?? ''); ?></td>
                                         <td><?php echo htmlspecialchars($name ?: ''); ?></td>
                                         <td><?php echo $hasEmail ? htmlspecialchars($r['email']) : '<span class="tag danger">No email</span>'; ?></td>
                                         <td>
@@ -173,12 +163,11 @@ function updateSel() {
   if (selCount) selCount.textContent = count + ' selected';
   const disable = count === 0;
   ['bulkBtn','bulkBtnBottom'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = disable; });
-  // highlight rows
   boxes.forEach(cb => { const tr = cb.closest('tr'); if (tr) tr.classList.toggle('selected', cb.checked); });
   const master = document.getElementById('masterCb'); if (master) master.checked = count>0 && count===boxes.filter(cb=>!cb.disabled).length;
 }
 function toggleAll(state){ document.querySelectorAll('.sel:not(:disabled)').forEach(cb=>cb.checked = !!state); updateSel(); }
-function submitBulk(){ const count = Array.from(document.querySelectorAll('.sel')).filter(cb=>cb.checked).length; if (count===0) return; if (!confirm('Generate new temporary passwords and email them to ' + count + ' student(s)?')) return; document.getElementById('bulkForm').submit(); }
+function submitBulk(){ const count = Array.from(document.querySelectorAll('.sel')).filter(cb=>cb.checked).length; if (count===0) return; if (!confirm('Generate new temporary passwords and email them to ' + count + ' instructor(s)?')) return; document.getElementById('bulkForm').submit(); }
 document.addEventListener('change', e => { if (e.target && (e.target.classList && e.target.classList.contains('sel'))) updateSel(); if (e.target && e.target.id==='masterCb'){ toggleAll(e.target.checked); }});
 window.addEventListener('load', updateSel);
 </script>

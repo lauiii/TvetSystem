@@ -233,6 +233,8 @@ foreach ($studentCourseAverages as $r) {
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Grades Overview - Admin</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
+    <link rel="stylesheet" href="../assets/css/dark-mode.css">
+    <script src="../assets/js/dark-mode.js" defer></script>
 </head>
 <body>
     <div class="admin-layout">

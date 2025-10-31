@@ -87,6 +87,8 @@ try {
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Instructors - Admin</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
+    <link rel="stylesheet" href="../assets/css/dark-mode.css">
+    <script src="../assets/js/dark-mode.js" defer></script>
 </head>
 <body>
     <div class="admin-layout">
@@ -125,7 +127,10 @@ try {
 
                 <div style="height:20px"></div>
                 <div class="card">
-                    <h3>Existing Instructors</h3>
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                        <h3 style="margin:0;">Existing Instructors</h3>
+                        <a class="btn" href="resend_passwords_instructors.php">Resend Passwords</a>
+                    </div>
                     <?php if (count($instructors) === 0): ?>
                         <p>No instructors found.</p>
                     <?php else: ?>

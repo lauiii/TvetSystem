@@ -84,6 +84,8 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Dashboard - <?php echo SITE_NAME; ?></title>
+    <link rel="stylesheet" href="../assets/css/dark-mode.css">
+    <script src="../assets/js/dark-mode.js" defer></script>
     <style>
         * {
             margin: 0;

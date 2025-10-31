@@ -101,6 +101,34 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
     }
 
     /**
+     * Send instructor credentials (temp password) via PHPMailer
+     */
+    function sendInstructorCredentials($email, $name, $password) {
+        try {
+            mailerConfiguredOrThrow();
+            $mail = new PHPMailer(true);
+            configureSMTP($mail);
+            $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
+            $mail->addAddress($email, $name);
+            $mail->isHTML(true);
+            $subject = 'Your ' . SITE_NAME . ' Instructor Account';
+            $body = '<p>Hello ' . htmlspecialchars($name) . ',</p>'
+                  . '<p>Your account password has been reset by an administrator. Use the credentials below to sign in, then change your password:</p>'
+                  . '<p><strong>Email:</strong> ' . htmlspecialchars($email) . '<br>'
+                  . '<strong>Temporary Password:</strong> ' . htmlspecialchars($password) . '</p>'
+                  . '<p><a href="' . htmlspecialchars(SITE_URL . '/login.php') . '">Login to your account</a></p>';
+            $mail->Subject = $subject;
+            $mail->Body = renderEmailTemplate($subject, $body);
+            $mail->AltBody = strip_tags($body);
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Instructor credentials email failed: " . ($mail->ErrorInfo ?? $e->getMessage()));
+            return false;
+        }
+    }
+
+    /**
      * Send generic notification via PHPMailer
      */
     function renderEmailTemplate($title, $contentHtml) {

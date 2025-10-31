@@ -111,6 +111,8 @@ $courses = $pdo->query("SELECT c.id, c.course_code, c.course_name, p.name as pro
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Student Flags - Admin</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
+    <link rel="stylesheet" href="../assets/css/dark-mode.css">
+    <script src="../assets/js/dark-mode.js" defer></script>
 </head>
 <body>
     <div class="admin-layout">

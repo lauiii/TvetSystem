@@ -353,6 +353,8 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Courses - Admin</title>
     <link rel="stylesheet" href="../assets/css/enhanced-admin-style.css">
+    <link rel="stylesheet" href="../assets/css/dark-mode.css">
+    <script src="../assets/js/dark-mode.js" defer></script>
 </head>
 <body>
     <div class="admin-layout">
