@@ -36,4 +36,3 @@ Next recommended work
 - Add instructor grading UI, assessments, and reports (PDF/Excel export).
 - Add unit tests or simple integration checks for CSV parsing and DB inserts.
 
-If you want, I can continue implementing the admin dashboard, auth middleware, and the rest of the features (PHPMailer wiring, instructor/student dashboards). Tell me which part to prioritize next.
