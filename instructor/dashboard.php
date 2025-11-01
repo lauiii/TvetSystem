@@ -297,7 +297,7 @@ $pendingFlags = $stmt->fetch()['count'];
         <!-- Statistics -->
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>Assigned Sections</h3>
+                <h3>Assigned Courses</h3>
                 <div class="number"><?php echo count($sections); ?></div>
             </div>
             <div class="stat-card">
@@ -312,13 +312,16 @@ $pendingFlags = $stmt->fetch()['count'];
             <div class="stat-card">
                 <h3>Pending Flags</h3>
                 <div class="number"><?php echo $pendingFlags; ?></div>
-                <div style="margin-top:10px"><a class="btn btn-secondary" href="flags.php">Manage Flags</a></div>
+                <div style="margin-top:10px">
+                    <a class="btn btn-secondary" href="flags.php">Manage Flags</a>
+                    <a class="btn btn-secondary" href="attendance-all.php" style="margin-left:6px;">All Classes</a>
+                </div>
             </div>
         </div>
         
         <!-- Sections Section -->
         <div class="courses-section">
-            <h2>📚 My Sections</h2>
+            <h2>📚 My Courses</h2>
 
             <?php if (count($sections) > 0): ?>
                 <div class="course-list">
@@ -340,6 +343,9 @@ $pendingFlags = $stmt->fetch()['count'];
                                 </a>
                                 <a href="assessments.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">
                                     Assessments
+                                </a>
+                                <a href="attendance.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
+                                    Attendance
                                 </a>
                             </div>
                         </div>

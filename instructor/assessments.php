@@ -11,30 +11,37 @@ $instructorId = $_SESSION['user_id'];
 $error = '';
 $msg = '';
 
-// Get courses taught by this instructor
-$courses = $pdo->prepare("
-    SELECT c.id, c.course_code, c.course_name, c.year_level, c.semester, p.name as program_name
-    FROM courses c
+// Get sections taught by this instructor
+$sectionsStmt = $pdo->prepare("
+    SELECT s.id AS section_id, s.section_code, s.section_name,
+           c.id AS course_id, c.course_code, c.course_name, c.year_level, c.semester, p.name as program_name
+    FROM instructor_sections ins
+    INNER JOIN sections s ON ins.section_id = s.id
+    INNER JOIN courses c ON s.course_id = c.id
     LEFT JOIN programs p ON c.program_id = p.id
-    WHERE c.instructor_id = ?
-    ORDER BY c.course_code
+    WHERE ins.instructor_id = ? AND s.status = 'active'
+    ORDER BY c.course_code, s.section_code
 ");
-$courses->execute([$instructorId]);
-$courses = $courses->fetchAll(PDO::FETCH_ASSOC);
+$sectionsStmt->execute([$instructorId]);
+$sectionsList = $sectionsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get selected course
-$courseId = intval($_GET['course_id'] ?? ($courses[0]['id'] ?? 0));
+// Get selected section
+$sectionId = intval($_GET['section_id'] ?? ($sectionsList[0]['section_id'] ?? 0));
+// Derive course id from selected section
+$courseId = 0;
+foreach ($sectionsList as $row) { if ((int)$row['section_id'] === $sectionId) { $courseId = (int)$row['course_id']; break; } }
 
 // Handle add criteria
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_criteria') {
     $course_id = intval($_POST['course_id'] ?? 0);
+    $section_id = intval($_POST['section_id'] ?? $sectionId);
     $name = sanitize($_POST['name'] ?? '');
     $period = sanitize($_POST['period'] ?? '');
     $percentage = floatval($_POST['percentage'] ?? 0);
 
-    // Verify instructor teaches this course
-    $courseCheck = $pdo->prepare("SELECT id FROM courses WHERE id = ? AND instructor_id = ?");
-    $courseCheck->execute([$course_id, $instructorId]);
+    // Verify instructor teaches this section
+    $courseCheck = $pdo->prepare("SELECT s.id FROM instructor_sections ins INNER JOIN sections s ON ins.section_id = s.id WHERE s.course_id = ? AND s.id = ? AND ins.instructor_id = ?");
+    $courseCheck->execute([$course_id, $section_id, $instructorId]);
     if (!$courseCheck->fetch()) {
         $error = 'You do not have permission to manage assessments for this course.';
     } elseif (empty($name) || empty($period) || $percentage <= 0 || $percentage > 100) {
@@ -62,8 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ];
 
         // Check total percentage for the specific period
-        $periodCheck = $pdo->prepare("SELECT SUM(percentage) as total FROM assessment_criteria WHERE course_id = ? AND period = ?");
-        $periodCheck->execute([$course_id, $period]);
+        $periodCheck = $pdo->prepare("SELECT SUM(percentage) as total FROM assessment_criteria WHERE section_id = ? AND period = ?");
+        $periodCheck->execute([$section_id, $period]);
         $currentPeriodTotal = floatval($periodCheck->fetch()['total'] ?? 0);
 
         if (!isset($periodLimits[$period])) {
@@ -75,8 +82,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     // Strengthen duplicate criteria prevention: use TRIM + case-insensitive COLLATE and a transaction
                     $pdo->beginTransaction();
                     try {
-                        $dupCrit = $pdo->prepare('SELECT id FROM assessment_criteria WHERE course_id = ? AND period = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
-                        $dupCrit->execute([$course_id, $period, $name]);
+                        $dupCrit = $pdo->prepare('SELECT id FROM assessment_criteria WHERE section_id = ? AND period = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
+                        $dupCrit->execute([$section_id, $period, $name]);
                         if ($dupCrit->fetch()) {
                             $pdo->rollBack();
                             $error = 'A criteria with that name already exists for this course and period.';
@@ -86,12 +93,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             $pweight = $periodWeights[$pkey] ?? 0;
                             $effective = ($pweight > 0) ? (($percentage / 100.0) * $pweight) : 0;
                             try {
-                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?)');
-                                $stmt->execute([$course_id, $name, $period, $percentage, $effective]);
+                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?, ?)');
+                                $stmt->execute([$course_id, $section_id, $name, $period, $percentage, $effective]);
                             } catch (Exception $e) {
                                 // fallback if column not yet added
-                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)');
-                                $stmt->execute([$course_id, $name, $period, $percentage]);
+                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage) VALUES (?, ?, ?, ?, ?)');
+                                $stmt->execute([$course_id, $section_id, $name, $period, $percentage]);
                             }
                             $pdo->commit();
                             $msg = 'Assessment criteria added successfully.';
@@ -155,11 +162,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $period = sanitize($_POST['period'] ?? '');
     $percentage = floatval($_POST['percentage'] ?? 0);
 
-    // Verify criteria belongs to instructor's course
+    // Verify criteria belongs to instructor's section
     $criteriaCheck = $pdo->prepare("
-        SELECT ac.id, ac.course_id, ac.period FROM assessment_criteria ac
-        INNER JOIN courses c ON ac.course_id = c.id
-        WHERE ac.id = ? AND c.instructor_id = ?
+        SELECT ac.id, ac.course_id, ac.period, ac.section_id FROM assessment_criteria ac
+        INNER JOIN instructor_sections ins ON ac.section_id = ins.section_id
+        WHERE ac.id = ? AND ins.instructor_id = ?
     ");
     $criteriaCheck->execute([$id, $instructorId]);
     $criteriaData = $criteriaCheck->fetch();
@@ -176,8 +183,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ];
 
         // Check total percentage for the specific period excluding current criteria
-        $periodCheck = $pdo->prepare("SELECT SUM(percentage) as total FROM assessment_criteria WHERE course_id = ? AND period = ? AND id != ?");
-        $periodCheck->execute([$criteriaData['course_id'], $period, $id]);
+        $periodCheck = $pdo->prepare("SELECT SUM(percentage) as total FROM assessment_criteria WHERE section_id = ? AND period = ? AND id != ?");
+        $periodCheck->execute([$criteriaData['section_id'], $period, $id]);
         $currentPeriodTotal = floatval($periodCheck->fetch()['total'] ?? 0);
 
         if (!isset($periodLimits[$period])) {
@@ -211,12 +218,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $name = sanitize($_POST['item_name'] ?? '');
     $total_score = floatval($_POST['total_score'] ?? 0);
 
-    // Verify item belongs to instructor's course
+    // Verify item belongs to instructor's section
     $itemCheck = $pdo->prepare("
         SELECT ai.id FROM assessment_items ai
         INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-        INNER JOIN courses c ON ac.course_id = c.id
-        WHERE ai.id = ? AND c.instructor_id = ?
+        INNER JOIN instructor_sections ins ON ac.section_id = ins.section_id
+        WHERE ai.id = ? AND ins.instructor_id = ?
     ");
     $itemCheck->execute([$id, $instructorId]);
     if (!$itemCheck->fetch()) {
@@ -240,11 +247,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_criteria') {
     $id = intval($_POST['id'] ?? 0);
 
-    // Verify criteria belongs to instructor's course
+    // Verify criteria belongs to instructor's section
     $criteriaCheck = $pdo->prepare("
         SELECT ac.id FROM assessment_criteria ac
-        INNER JOIN courses c ON ac.course_id = c.id
-        WHERE ac.id = ? AND c.instructor_id = ?
+        INNER JOIN instructor_sections ins ON ac.section_id = ins.section_id
+        WHERE ac.id = ? AND ins.instructor_id = ?
     ");
     $criteriaCheck->execute([$id, $instructorId]);
     if (!$criteriaCheck->fetch()) {
@@ -264,12 +271,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_item') {
     $id = intval($_POST['id'] ?? 0);
 
-    // Verify item belongs to instructor's course
+    // Verify item belongs to instructor's section
     $itemCheck = $pdo->prepare("
         SELECT ai.id FROM assessment_items ai
         INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-        INNER JOIN courses c ON ac.course_id = c.id
-        WHERE ai.id = ? AND c.instructor_id = ?
+        INNER JOIN instructor_sections ins ON ac.section_id = ins.section_id
+        WHERE ai.id = ? AND ins.instructor_id = ?
     ");
     $itemCheck->execute([$id, $instructorId]);
     if (!$itemCheck->fetch()) {
@@ -287,15 +294,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 // ✅ Fixed version — prevents duplicated criteria
 $criteria = [];
-if ($courseId > 0) {
-    // Step 1: Fetch all criteria for this course (one row per criteria)
+if ($sectionId > 0) {
+    // Step 1: Fetch all criteria for this section (one row per criteria)
     $stmt = $pdo->prepare("
         SELECT id, name, period, percentage
         FROM assessment_criteria
-        WHERE course_id = ?
+        WHERE section_id = ?
         ORDER BY period, id ASC
     ");
-    $stmt->execute([$courseId]);
+    $stmt->execute([$sectionId]);
     $criteria = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Optional debug
@@ -558,7 +565,7 @@ if ($courseId > 0) {
             <h1>Manage Assessments</h1>
             <p>Create and manage assessments for your courses</p>
             <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:10px;">
-                <a href="manage-grades.php" class="btn btn-primary">🧮 Manage Grades</a>
+                <a href="manage-grades.php?section_id=<?php echo (int)$sectionId; ?>" class="btn btn-primary">🧮 Manage Grades</a>
             </div>
         </div>
 
@@ -574,12 +581,12 @@ if ($courseId > 0) {
             <h2 style="color: #6a0dad; margin-bottom: 20px;">Select Course</h2>
             <form method="GET">
                 <div class="form-group">
-                    <label for="course_id">Course:</label>
-                    <select name="course_id" id="course_id" class="form-control" onchange="this.form.submit()">
-                        <option value="">Select a course...</option>
-                        <?php foreach ($courses as $course): ?>
-                            <option value="<?php echo $course['id']; ?>" <?php echo $courseId == $course['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($course['course_code'] . ' - ' . $course['course_name'] . ' (' . $course['program_name'] . ' - Year ' . $course['year_level'] . ', Sem ' . $course['semester'] . ')'); ?>
+                    <label for="section_id">Course:</label>
+                    <select name="section_id" id="section_id" class="form-control" onchange="this.form.submit()">
+                        <option value="">Select a section...</option>
+                        <?php foreach ($sectionsList as $sec): ?>
+                            <option value="<?php echo (int)$sec['section_id']; ?>" <?php echo $sectionId == (int)$sec['section_id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($sec['course_code'] . ' - ' . $sec['section_code'] . ' — ' . $sec['course_name']); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -587,12 +594,13 @@ if ($courseId > 0) {
             </form>
         </div>
 
-        <?php if ($courseId > 0): ?>
+        <?php if ($sectionId > 0): ?>
             <div class="card">
                 <h2 style="color: #6a0dad; margin-bottom: 20px;">Add New Assessment Criteria</h2>
                 <form method="POST">
                     <input type="hidden" name="action" value="add_criteria">
                     <input type="hidden" name="course_id" value="<?php echo $courseId; ?>">
+                    <input type="hidden" name="section_id" value="<?php echo (int)$sectionId; ?>">
 
                     <div class="form-group">
                         <label for="name">Criteria Name:</label>

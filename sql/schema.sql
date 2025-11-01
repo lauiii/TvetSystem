@@ -177,4 +177,31 @@ CREATE TABLE IF NOT EXISTS `flags` (
   FOREIGN KEY (`course_id`) REFERENCES courses(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- attendance_sessions
+CREATE TABLE IF NOT EXISTS `attendance_sessions` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `section_id` INT NOT NULL,
+  `session_date` DATE NOT NULL,
+  `started_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `status` ENUM('open','closed') DEFAULT 'open',
+  `notes` TEXT NULL,
+  UNIQUE KEY `unique_section_date` (`section_id`,`session_date`),
+  KEY `idx_section` (`section_id`),
+  CONSTRAINT `fk_attendance_section` FOREIGN KEY (`section_id`) REFERENCES `sections`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- attendance_records
+CREATE TABLE IF NOT EXISTS `attendance_records` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `session_id` INT NOT NULL,
+  `enrollment_id` INT NOT NULL,
+  `status` ENUM('present','absent','late','excused') NOT NULL DEFAULT 'present',
+  `notes` VARCHAR(255) NULL,
+  `marked_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY `unique_session_enrollment` (`session_id`,`enrollment_id`),
+  KEY `idx_session` (`session_id`),
+  KEY `idx_enrollment` (`enrollment_id`),
+  CONSTRAINT `fk_attendance_session` FOREIGN KEY (`session_id`) REFERENCES `attendance_sessions`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_attendance_enrollment` FOREIGN KEY (`enrollment_id`) REFERENCES `enrollments`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

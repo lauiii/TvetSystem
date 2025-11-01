@@ -67,6 +67,8 @@ try {
         section_code VARCHAR(20) NOT NULL,
         section_name VARCHAR(100),
         room_id INT NULL,
+        start_time TIME NULL,
+        end_time TIME NULL,
         capacity INT NOT NULL DEFAULT 30,
         enrolled_count INT DEFAULT 0,
         status ENUM('active','inactive') DEFAULT 'active',
@@ -87,7 +89,9 @@ try {
         UNIQUE KEY unique_instructor_section (instructor_id, section_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
-    // Add enrolled_count column to sections if not exists
+    // Add schedule/time and enrolled_count columns to sections if not exists
+    $pdo->exec("ALTER TABLE sections ADD COLUMN IF NOT EXISTS start_time TIME NULL AFTER room_id");
+    $pdo->exec("ALTER TABLE sections ADD COLUMN IF NOT EXISTS end_time TIME NULL AFTER start_time");
     $pdo->exec("ALTER TABLE sections ADD COLUMN IF NOT EXISTS enrolled_count INT DEFAULT 0 AFTER capacity");
 
     // Insert sample rooms
@@ -101,12 +105,15 @@ try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS assessment_criteria (
         id INT AUTO_INCREMENT PRIMARY KEY,
         course_id INT NOT NULL,
+        section_id INT NULL,
         name VARCHAR(100) NOT NULL,
         period ENUM('prelim','midterm','finals') NOT NULL,
         percentage DECIMAL(5,2) NOT NULL,
         effective_percentage DECIMAL(6,2) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+        FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE,
+        INDEX idx_ac_section (section_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS assessment_items (
@@ -121,7 +128,10 @@ try {
     // Add total_score column if not exists (for existing tables)
     $pdo->exec("ALTER TABLE assessment_items ADD COLUMN IF NOT EXISTS total_score DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER name");
 
-    // Add effective_percentage column to assessment_criteria if missing
+    // Add section_id and effective_percentage column to assessment_criteria if missing
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN IF NOT EXISTS section_id INT NULL AFTER course_id"); } catch(Exception $e) {}
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD CONSTRAINT fk_ac_section FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE"); } catch(Exception $e) {}
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD INDEX IF NOT EXISTS idx_ac_section (section_id)"); } catch(Exception $e) {}
     try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN IF NOT EXISTS effective_percentage DECIMAL(6,2) NULL AFTER percentage"); } catch(Exception $e) {}
 
     // Backfill effective_percentage for existing rows based on period weights
@@ -153,8 +163,9 @@ try {
     try {
         // Create generated column name_norm if not exists
         try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN name_norm VARCHAR(100) GENERATED ALWAYS AS (LOWER(TRIM(name))) STORED"); } catch(Exception $e) {}
-        // Add unique key if not exists
+        // Add unique keys (course-level legacy and section-level override)
         try { $pdo->exec("ALTER TABLE assessment_criteria ADD UNIQUE KEY unique_criteria (course_id, period, name_norm)"); } catch(Exception $e) {}
+        try { $pdo->exec("ALTER TABLE assessment_criteria ADD UNIQUE KEY unique_criteria_section (section_id, period, name_norm)"); } catch(Exception $e) {}
 
         // Delete duplicates (keep smallest id)
         $pdo->exec("DELETE ac1 FROM assessment_criteria ac1 INNER JOIN assessment_criteria ac2 ON ac1.course_id = ac2.course_id AND ac1.period = ac2.period AND LOWER(TRIM(ac1.name)) = LOWER(TRIM(ac2.name)) AND ac1.id > ac2.id");
@@ -183,6 +194,55 @@ try {
     try { $pdo->exec("ALTER TABLE flags ADD CONSTRAINT fk_flags_flagged_by FOREIGN KEY (flagged_by) REFERENCES users(id) ON DELETE CASCADE"); } catch(Exception $e) {}
     try { $pdo->exec("ALTER TABLE enrollments ADD CONSTRAINT fk_enrollments_school_year FOREIGN KEY (school_year_id) REFERENCES school_years(id) ON DELETE CASCADE"); } catch(Exception $e) {}
     try { $pdo->exec("ALTER TABLE courses ADD CONSTRAINT fk_courses_instructor FOREIGN KEY (instructor_id) REFERENCES users(id) ON DELETE SET NULL"); } catch(Exception $e) {}
+
+    // Attendance tables
+    $pdo->exec("CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        section_id INT NOT NULL,
+        session_date DATE NOT NULL,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status ENUM('open','closed') DEFAULT 'open',
+        notes TEXT NULL,
+        UNIQUE KEY unique_section_date (section_id, session_date),
+        INDEX idx_section (section_id),
+        FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS attendance_records (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,
+        enrollment_id INT NOT NULL,
+        status ENUM('present','absent','late','excused') NOT NULL DEFAULT 'present',
+        notes VARCHAR(255) NULL,
+        marked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_session_enrollment (session_id, enrollment_id),
+        INDEX idx_session (session_id),
+        INDEX idx_enrollment (enrollment_id),
+        FOREIGN KEY (session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (enrollment_id) REFERENCES enrollments(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Ensure unique keys exist even on pre-existing tables
+    try { $pdo->exec("ALTER TABLE attendance_sessions ADD UNIQUE KEY unique_section_date (section_id, session_date)"); } catch (Exception $e) { /* ignore */ }
+    try { $pdo->exec("ALTER TABLE attendance_records ADD UNIQUE KEY unique_session_enrollment (session_id, enrollment_id)"); } catch (Exception $e) { /* ignore */ }
+
+    // Deduplicate existing attendance_sessions keeping lowest id per (section_id, session_date)
+    try {
+        $dups = $pdo->query("SELECT section_id, session_date, MIN(id) AS keep_id, GROUP_CONCAT(id ORDER BY id) AS ids, COUNT(*) AS cnt FROM attendance_sessions GROUP BY section_id, session_date HAVING cnt > 1");
+        foreach ($dups as $row) {
+            $keep = (int)$row['keep_id'];
+            $ids = array_map('intval', explode(',', $row['ids']));
+            foreach ($ids as $id) {
+                if ($id === $keep) continue;
+                // Reassign records from duplicate session to keeper
+                $upd = $pdo->prepare("UPDATE attendance_records SET session_id = ? WHERE session_id = ?");
+                $upd->execute([$keep, $id]);
+                // Delete duplicate session
+                $del = $pdo->prepare("DELETE FROM attendance_sessions WHERE id = ?");
+                $del->execute([$id]);
+            }
+        }
+    } catch (Exception $e) { /* ignore */ }
 
     // Update existing data to populate first_name and last_name from name (only if name column exists)
     try {

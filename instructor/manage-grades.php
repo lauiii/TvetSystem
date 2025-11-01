@@ -35,31 +35,30 @@ if (!$section) {
 // Auto-provision assessment structure for missing periods so instructors don't have to re-create items
 try {
     // Verify which periods already exist for this course
-    $pstmt = $pdo->prepare("SELECT DISTINCT period FROM assessment_criteria WHERE course_id = ?");
-    $pstmt->execute([$section['course_id']]);
+    $pstmt = $pdo->prepare("SELECT DISTINCT period FROM assessment_criteria WHERE section_id = ?");
+    $pstmt->execute([$section['id']]);
     $existingPeriods = array_map('strtolower', array_column($pstmt->fetchAll(PDO::FETCH_ASSOC), 'period'));
     $allPeriods = ['prelim','midterm','finals'];
     $missing = array_values(array_diff($allPeriods, $existingPeriods));
 
     if (!empty($missing)) {
-        // Choose a source period to clone from: prefer 'prelim', else any existing
+        // Choose a source period within this section to clone from (prefer 'prelim')
         $sourcePeriod = in_array('prelim', $existingPeriods, true) ? 'prelim' : (count($existingPeriods) ? $existingPeriods[0] : null);
         if ($sourcePeriod !== null) {
             $pdo->beginTransaction();
-            // Fetch criteria of source period
-            $srcCritStmt = $pdo->prepare("SELECT id, name, percentage FROM assessment_criteria WHERE course_id = ? AND period = ? ORDER BY id");
-            $srcCritStmt->execute([$section['course_id'], $sourcePeriod]);
+            // Fetch criteria of source period for this section
+            $srcCritStmt = $pdo->prepare("SELECT id, name, percentage FROM assessment_criteria WHERE section_id = ? AND period = ? ORDER BY id");
+            $srcCritStmt->execute([$section['id'], $sourcePeriod]);
             $sourceCriteria = $srcCritStmt->fetchAll(PDO::FETCH_ASSOC);
             // Prepare item fetch
             $srcItemStmt = $pdo->prepare("SELECT name, total_score FROM assessment_items WHERE criteria_id = ? ORDER BY id");
 
             foreach ($missing as $tgtPeriod) {
-                // Skip if invalid target
                 if (!in_array($tgtPeriod, $allPeriods, true)) continue;
                 foreach ($sourceCriteria as $crit) {
-                    // Insert cloned criteria for target period
-                    $insCrit = $pdo->prepare("INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)");
-                    $insCrit->execute([$section['course_id'], $crit['name'], $tgtPeriod, $crit['percentage']]);
+                    // Insert cloned criteria for target period scoped to this section
+                    $insCrit = $pdo->prepare("INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage) VALUES (?, ?, ?, ?, ?)");
+                    $insCrit->execute([$section['course_id'], $section['id'], $crit['name'], $tgtPeriod, $crit['percentage']]);
                     $newCritId = (int)$pdo->lastInsertId();
                     // Clone items under this criteria
                     $srcItemStmt->execute([$crit['id']]);
@@ -70,7 +69,6 @@ try {
                 }
             }
             $pdo->commit();
-            // Refresh page to reflect newly provisioned periods
             header('Location: ' . $_SERVER['REQUEST_URI']);
             exit;
         }
@@ -86,10 +84,10 @@ function processGrades($pdo, $gradesPayload)
         $pdo->beginTransaction();
         // Validate assessment IDs and enrollment IDs belong to this course before inserting
         // Fetch valid assessment ids for the course
-        $validAssessmentStmt = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)");
-        // Use global $section to get course_id
+        $validAssessmentStmt = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE section_id = ?)");
+        // Use global $section to get section_id
         global $section;
-        $validAssessmentStmt->execute([$section['course_id']]);
+        $validAssessmentStmt->execute([$section['id']]);
         $validAssessments = array_column($validAssessmentStmt->fetchAll(), 'id');
         $validAssessmentsMap = array_flip($validAssessments);
 
@@ -192,10 +190,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
                 if ($nm) { $instrName = $nm; }
             } catch (Exception $ee) { /* ignore */ }
         }
-        $subject = 'Grades Submitted — ' . $course . ' (Section ' . $sec . ')';
+        $semVal = isset($section['semester']) ? (int)$section['semester'] : null;
+        $semName = ($semVal === 1 ? 'First' : ($semVal === 2 ? 'Second' : ($semVal === 3 ? 'Summer' : '')));
+        $subject = 'Grades Submitted — ' . $course . ' (Section ' . $sec . ( $semName !== '' ? (', Sem ' . $semName) : '' ) . ')';
         $body = '<p>Grades have been submitted.</p>'
               . '<p><strong>Course:</strong> ' . htmlspecialchars($course) . '<br>'
               . '<strong>Section:</strong> ' . htmlspecialchars($sec) . '<br>'
+              . ($semName !== '' ? ('<strong>Semester:</strong> ' . htmlspecialchars($semName) . '<br>') : '')
               . '<strong>Instructor:</strong> ' . htmlspecialchars($instrName ?: 'Unknown') . '<br>'
               . '<strong>When:</strong> ' . date('Y-m-d H:i:s') . '</p>'
               . '<p>You can review in the system.</p>';
@@ -205,8 +206,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
     if ($isAjax) {
         // attach assessment averages to AJAX response for client refresh
         // compute updated averages
-        $avgStmt = $pdo->prepare("SELECT assessment_id, AVG(grade) as avg_grade FROM grades WHERE assessment_id IN (SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)) GROUP BY assessment_id");
-        $avgStmt->execute([$section['course_id']]);
+        $avgStmt = $pdo->prepare("SELECT assessment_id, AVG(grade) as avg_grade FROM grades WHERE assessment_id IN (SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE section_id = ?)) GROUP BY assessment_id");
+        $avgStmt->execute([$section['id']]);
         $avgs = [];
         foreach ($avgStmt->fetchAll() as $r) { $avgs[$r['assessment_id']] = $r['avg_grade'] !== null ? floatval($r['avg_grade']) : null; }
         $result['averages'] = $avgs;
@@ -230,10 +231,10 @@ $stmt = $pdo->prepare(
     "SELECT ai.id, ai.name, ai.total_score, ac.id as criteria_id, ac.name as criteria_name, ac.period, ac.percentage
     FROM assessment_items ai
     INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-    WHERE ac.course_id = ?
+    WHERE ac.section_id = ?
     ORDER BY ac.period, ai.name"
 );
-$stmt->execute([$section['course_id']]);
+$stmt->execute([$section['id']]);
 $assessments = $stmt->fetchAll();
 
 // Fetch enrolled students
