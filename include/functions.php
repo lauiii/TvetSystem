@@ -183,7 +183,34 @@ function create_user(PDO $pdo, $firstName, $lastName, $email, $program_id = null
  * Uses the active school year (status='active') when inserting enrollments.
  * Now enrolls into sections with capacity checks.
  */
+function ensure_unique_enrollments_schema(PDO $pdo): void {
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN);
+        $hasSy = in_array('school_year_id', $cols, true);
+        // Deduplicate: keep lowest id
+        if ($hasSy) {
+            $pdo->exec("DELETE e1 FROM enrollments e1 JOIN enrollments e2 ON e1.student_id=e2.student_id AND e1.course_id=e2.course_id AND e1.school_year_id=e2.school_year_id AND e1.id>e2.id");
+        } else {
+            $pdo->exec("DELETE e1 FROM enrollments e1 JOIN enrollments e2 ON e1.student_id=e2.student_id AND e1.course_id=e2.course_id AND e1.id>e2.id");
+        }
+        // Ensure unique index
+        $idx = $pdo->prepare("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='enrollments' AND INDEX_NAME=?");
+        $idx->execute(['uniq_enrollment_scsy']);
+        $hasIdx = (int)$idx->fetchColumn() > 0;
+        if (!$hasIdx) {
+            if ($hasSy) {
+                $pdo->exec("ALTER TABLE enrollments ADD UNIQUE KEY uniq_enrollment_scsy (student_id, course_id, school_year_id)");
+            } else {
+                $pdo->exec("ALTER TABLE enrollments ADD UNIQUE KEY uniq_enrollment_scsy (student_id, course_id)");
+            }
+        }
+    } catch (Exception $e) { /* best-effort */ }
+}
+
 function auto_enroll_student(PDO $pdo, $user_id, $program_id, $year_level, ?int $semester = null) {
+    // Enforce uniqueness upfront (best-effort)
+    ensure_unique_enrollments_schema($pdo);
+
     // Find active school year and active semester (schema-adaptive)
     $stmt = $pdo->prepare("SELECT id, 
         CASE 
@@ -225,39 +252,54 @@ function auto_enroll_student(PDO $pdo, $user_id, $program_id, $year_level, ?int 
  * Enroll a student into an available section of a course with capacity check
  */
 function enroll_student_in_section(PDO $pdo, $user_id, $course_id, $school_year_id) {
+    // If already enrolled (unique per student/course/year), skip
+    try {
+        $existsStmt = $pdo->prepare("SELECT id FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id = ?) LIMIT 1");
+        $existsStmt->execute([$user_id, $course_id, $school_year_id]);
+        if ($existsStmt->fetchColumn()) {
+            return false; // already enrolled; no increment
+        }
+    } catch (Exception $e) { /* proceed */ }
+
     // Find sections for this course with available capacity
-    $stmt = $pdo->prepare("
-        SELECT s.id, s.capacity, s.enrolled_count
+    $stmt = $pdo->prepare("SELECT s.id, s.capacity, s.enrolled_count
         FROM sections s
         WHERE s.course_id = ? AND s.status = 'active' AND s.enrolled_count < s.capacity
         ORDER BY s.enrolled_count ASC
-        LIMIT 1
-    ");
+        LIMIT 1");
     $stmt->execute([$course_id]);
     $section = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$section) {
-        // No available sections, enroll directly in course (legacy support)
-        $ins = $pdo->prepare("INSERT IGNORE INTO enrollments (student_id, course_id, school_year_id, status) VALUES (?, ?, ?, 'enrolled')");
-        $ins->execute([$user_id, $course_id, $school_year_id]);
+        // No available sections, enroll directly in course (legacy support) – avoid duplicates via WHERE NOT EXISTS
+        $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
+                              SELECT ?, ?, ?, 'enrolled' FROM DUAL
+                              WHERE NOT EXISTS (
+                                  SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                              )");
+        $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
         return $ins->rowCount() > 0;
     }
 
     // Enroll in section and update count
     $pdo->beginTransaction();
     try {
-        // Insert enrollment
-        $ins = $pdo->prepare("INSERT IGNORE INTO enrollments (student_id, course_id, school_year_id, status) VALUES (?, ?, ?, 'enrolled')");
-        $ins->execute([$user_id, $course_id, $school_year_id]);
+        // Conditional insert to avoid duplicates
+        $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
+                              SELECT ?, ?, ?, 'enrolled' FROM DUAL
+                              WHERE NOT EXISTS (
+                                  SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                              )");
+        $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
 
         if ($ins->rowCount() > 0) {
-            // Update section enrolled count
+            // Update section enrolled count only when we actually inserted
             $updateStmt = $pdo->prepare("UPDATE sections SET enrolled_count = enrolled_count + 1 WHERE id = ?");
             $updateStmt->execute([$section['id']]);
         }
 
         $pdo->commit();
-        return true;
+        return $ins->rowCount() > 0;
     } catch (Exception $e) {
         $pdo->rollBack();
         return false;
