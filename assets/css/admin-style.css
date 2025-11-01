@@ -93,6 +93,13 @@ label{font-weight:600;color:#333}
 .modern-file-upload .file-upload-label:hover{border-color:var(--accent);background:#f8f9fa}
 .modern-file-upload .file-icon{font-size:24px}
 .modern-file-upload .file-text{flex:1;color:#666}
+/* chips */
+.chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{display:inline-block;padding:4px 10px;border-radius:999px;background:#f0ebff;color:#5a31a6;border:1px solid #e3d9ff;font-size:12px}
+/* Indeterminate progress */
+.progress-indeterminate{height:6px;background:#eef1f7;border-radius:999px;overflow:hidden;position:relative}
+.progress-indeterminate .ind-bar{position:absolute;left:-40%;width:40%;height:100%;background:linear-gradient(90deg,var(--accent) 0%, #9a6be0 100%);animation:indet 1.2s infinite}
+@keyframes indet{0%{left:-40%}50%{left:30%}100%{left:100%}}
 
 @media (max-width:900px){
     .sidebar{transform:translateX(-100%);position:fixed;z-index:1000}
@@ -488,3 +495,19 @@ body {
 /* Card hover elevation */
 .stat-card, .activity-card { transition: transform .12s ease, box-shadow .2s ease; }
 .stat-card:hover, .activity-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover, 0 8px 24px rgba(106,13,173,0.18)); }
+
+/* Generic table enhancements (no external framework) */
+.table-responsive{width:100%;overflow-x:auto}
+.report-table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.05)}
+.report-table thead th{position:sticky;top:0;background:linear-gradient(180deg,#fafafe 0%, #f3f4f8 100%);color:#555;font-weight:600;padding:12px 14px;text-align:left;border-bottom:1px solid #e9e9f2;z-index:1}
+.report-table td{padding:12px 14px;border-bottom:1px solid #f0f0f5;vertical-align:middle}
+.report-table tbody tr:nth-child(even){background:#fcfcff}
+.report-table tbody tr:hover{background:#f8f9ff}
+.text-right{text-align:right}
+.text-nowrap{white-space:nowrap}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;line-height:1;border:1px solid #e6e6e6;background:#fff;color:#333}
+.badge-secondary{background:#eef1f7;border-color:#e0e4ec;color:#444}
+.badge-light{background:#fff;border-color:#e6e6e6;color:#555}
+.btn.sm{padding:6px 10px;font-size:12.5px;border-radius:6px}
+.meter{position:relative;height:6px;background:#eef1f7;border-radius:999px;overflow:hidden}
+.meter > span{display:block;height:100%;background:var(--accent)}

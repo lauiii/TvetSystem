@@ -18,7 +18,7 @@ if (file_exists($localConfig)) {
 
 // Site-wide constants (adjust as needed)
 if (!defined('SITE_NAME')) {
-    define('SITE_NAME', 'College Grading System');
+    define('SITE_NAME', 'ASCB TVET');
 }
 // Update SITE_URL to match your local environment
 if (!defined('SITE_URL')) {

@@ -5,6 +5,7 @@
  * Filters: date range, section, status; CSV export
  */
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../include/functions.php';
 requireRole('instructor');
 
 $instructorId = $_SESSION['user_id'];
@@ -154,6 +155,14 @@ if (isset($_GET['export']) && $_GET['export'] == '1') {
         <button class="btn" type="submit">Filter</button>
         <a class="btn secondary" href="?start=<?php echo urlencode($start); ?>&end=<?php echo urlencode($end); ?>&course_id=<?php echo (int)$filterCourse; ?>&section_id=<?php echo (int)$filterSection; ?>&export=1">Export CSV</a>
       </form>
+      <?php if ($filterSection > 0) { 
+            $att = get_attendance_weights($pdo, (int)$filterSection);
+            if (!empty($att)) {
+                $parts = [];
+                foreach (['prelim','midterm','finals'] as $p) { if (isset($att[$p])) { $parts[] = ucfirst($p).': '.number_format($att[$p],0).'%'; } }
+                if (!empty($parts)) { echo '<div class="muted" style="margin-top:8px">Attendance Weight — ' . htmlspecialchars(implode(' • ', $parts)) . '</div>'; }
+            }
+        } ?>
     </div>
 
     <div class="card">

@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <form method="POST">
                     <div class="form-group">
                         <label>Recipient</label>
-                        <input type="email" name="to" value="<?php echo htmlspecialchars($to ?: (SMTP_USER ?? '')); ?>" required>
+                        <input type="email" name="to" value="<?php echo htmlspecialchars($to ?: (function(){ require_once __DIR__.'/../include/email-functions.php'; return get_admin_email($GLOBALS['pdo'] ?? null); })()); ?>" required>
                     </div>
                     <button class="btn primary" type="submit">Send Test</button>
                 </form>

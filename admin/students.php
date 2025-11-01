@@ -44,11 +44,12 @@ $select = implode(', ', $selectParts);
 
 $sql = "SELECT $select FROM users u 
 LEFT JOIN programs p ON u.program_id = p.id
-INNER JOIN enrollments e ON e.student_id = u.id AND e.school_year_id = :syid";
+LEFT JOIN enrollments e ON e.student_id = u.id AND e.school_year_id = :syid
+WHERE u.role = 'student'";
 
 $params = [':syid' => $syId];
 if ($q !== '') {
-    // Build WHERE parts depending on which columns exist
+    // Build filter conditions depending on which columns exist
     $whereParts = [];
     if (in_array('student_id', $userCols)) $whereParts[] = "u.student_id LIKE :q";
     if (in_array('email', $userCols)) $whereParts[] = "u.email LIKE :q";
@@ -61,11 +62,18 @@ if ($q !== '') {
     }
 }
 
-$sql .= " WHERE u.role = 'student' ORDER BY u.id DESC LIMIT 200";
+$sql .= " ORDER BY u.id DESC LIMIT 200";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// AJAX response for real-time search
+if (isset($_GET['ajax'])) {
+    header('Content-Type: application/json');
+    echo json_encode($students);
+    exit;
+}
 
 ?>
 <!doctype html>
@@ -120,7 +128,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <th>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody id="studentsBody">
                                 <?php if (count($students) === 0): ?>
                                     <tr><td colspan="6" style="text-align:center;color:#999">No students found</td></tr>
                                 <?php else: ?>
@@ -135,7 +143,6 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             $program = $s['program_name'] ?? 'N/A';
                                             $email = $s['email'] ?? 'N/A';
                                             $year = $s['year_level'] ?? 'N/A';
-                                            $status = $s['status'] ?? 'N/A';
                                         ?>
                                         <tr>
                                             <td><?php echo htmlspecialchars($sid); ?></td>
@@ -151,10 +158,60 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </table>
                     </div>
                 </div>
-            </div>
+</div>
         </main>
     </div>
     
+    <script>
+    (function(){
+      const qInput = document.querySelector('input[name="q"]');
+      const sySel = document.querySelector('select[name="sy_id"]');
+      const tbody = document.getElementById('studentsBody');
+
+      function debounce(fn, ms){ let t; return function(){ clearTimeout(t); t = setTimeout(fn, ms); }; }
+
+      function render(rows){
+        tbody.innerHTML = '';
+        if (!rows || rows.length === 0){
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">No students found</td></tr>';
+          return;
+        }
+        rows.forEach(function(s){
+          const sid = s.student_id || 'N/A';
+          const name = (s.first_name || s.last_name) ? ((s.last_name||'') + ', ' + (s.first_name||'')) : (s.full_name || s.email || 'N/A');
+          const program = s.program_name || 'N/A';
+          const email = s.email || 'N/A';
+          const year = s.year_level != null ? s.year_level : 'N/A';
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${escapeHtml(sid)}</td>
+            <td>${escapeHtml(name)}</td>
+            <td>${escapeHtml(email)}</td>
+            <td>${escapeHtml(program)}</td>
+            <td>${escapeHtml(String(year))}</td>
+            <td><button class="btn btn-sm" style="padding:6px 12px;font-size:13px;" onclick="viewProfile(${s.id})">View Profile</button></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function escapeHtml(str){ return String(str).replace(/[&<>\"]/g, function(s){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[s]; }); }
+
+      function load(){
+        const url = `students.php?ajax=1&sy_id=${encodeURIComponent(sySel.value)}&q=${encodeURIComponent(qInput.value||'')}`;
+        fetch(url, {headers: {'X-Requested-With':'XMLHttpRequest'}})
+          .then(r => r.json())
+          .then(render)
+          .catch(()=>{ /* ignore */ });
+      }
+
+      qInput && qInput.addEventListener('input', debounce(load, 250));
+      sySel && sySel.addEventListener('change', load);
+      // initial load to reflect current query
+      document.addEventListener('DOMContentLoaded', load);
+    })();
+    </script>
+
     <!-- Student Profile Modal -->
     <div id="profileModal" class="modal">
         <div class="modal-content" style="max-width:900px;">

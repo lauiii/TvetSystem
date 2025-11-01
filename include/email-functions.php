@@ -144,6 +144,27 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             . '</div></body></html>';
     }
 
+    /**
+     * Resolve current admin email from DB/session.
+     */
+    function get_admin_email(PDO $pdo = null) {
+        // Prefer session email if logged-in admin
+        if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin' && !empty($_SESSION['email'])) {
+            return $_SESSION['email'];
+        }
+        // Fallback: query active admin
+        try {
+            if ($pdo === null && isset($GLOBALS['pdo']) && $GLOBALS['pdo'] instanceof PDO) { $pdo = $GLOBALS['pdo']; }
+            if ($pdo instanceof PDO) {
+                $st = $pdo->query("SELECT email FROM users WHERE role='admin' AND (status IS NULL OR status='active') ORDER BY id LIMIT 1");
+                $em = trim((string)$st->fetchColumn());
+                if ($em !== '') return $em;
+            }
+        } catch (Exception $e) { /* ignore */ }
+        // Last resort: use SMTP_FROM
+        return defined('SMTP_FROM') ? SMTP_FROM : '';
+    }
+
     function sendNotificationEmail($email, $firstName, $subject, $message) {
         try {
             mailerConfiguredOrThrow();
@@ -162,6 +183,42 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             return true;
         } catch (Exception $e) {
             error_log("Notification email failed: " . ($mail->ErrorInfo ?? $e->getMessage()));
+            return false;
+        }
+    }
+
+    /**
+     * Send a notification to the current admin.
+     */
+    function sendAdminNotification($subject, $messageHtml) {
+        $to = get_admin_email();
+        if ($to === '') return false;
+        return sendNotificationEmail($to, 'Administrator', $subject, $messageHtml);
+    }
+
+    /**
+     * Send a notification with attachment to current admin.
+     */
+    function sendAdminEmailWithAttachment($subject, $html, $attachmentName, $attachmentContent, $mime = 'text/csv') {
+        try {
+            mailerConfiguredOrThrow();
+            $mail = new PHPMailer(true);
+            configureSMTP($mail);
+            $to = get_admin_email();
+            if ($to === '') return false;
+            $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
+            $mail->addAddress($to, 'Administrator');
+            $mail->isHTML(true);
+            $mail->Subject = $subject;
+            $mail->Body = $html;
+            $mail->AltBody = strip_tags($html);
+            if (!empty($attachmentContent)) {
+                $mail->addStringAttachment($attachmentContent, $attachmentName, 'base64', $mime);
+            }
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log("Admin attachment email failed: " . ($mail->ErrorInfo ?? $e->getMessage()));
             return false;
         }
     }

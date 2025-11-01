@@ -365,7 +365,7 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
             <div class="container">
                 <?php $pageTitle = 'Courses'; require __DIR__ . '/inc/header.php'; ?>
 
-                <div class="card" style="max-width: 600px; margin: 0 auto; border-radius: 10px;">
+    <div class="card" style="max-width: 600px; margin: 0 auto; border-radius: 10px;">
                     <?php if ($error): ?><div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
                     <?php if ($msg): ?><div class="alert alert-success"><?php echo htmlspecialchars($msg); ?></div><?php endif; ?>
 
@@ -490,22 +490,36 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
 
     <!-- Import Courses -->
     <div class="card import-card" style="max-width: 100%; margin: 20px auto; border-radius: 12px;">
-        <h3>Import Courses</h3>
-        <p class="import-desc">Upload a CSV/Excel file with columns: <code>program_code</code>, <code>course_code</code>, <code>course_name</code>, <code>units</code>, <code>year_level</code>, <code>semester</code>.</p>
-        <form method="POST" enctype="multipart/form-data" class="import-form" style="display:flex; gap:16px; align-items:end; flex-wrap:wrap;">
+        <h3 style="margin-bottom:6px;">Import Courses</h3>
+        <div class="chips" style="margin-bottom:10px; justify-content:center;">
+            <span class="chip" title="Program short code">program_code</span>
+            <span class="chip">course_code</span>
+            <span class="chip">course_name</span>
+            <span class="chip">units</span>
+            <span class="chip">year_level</span>
+            <span class="chip">semester</span>
+            <a class="template-link" href="../assets/templates/courses_import_template.csv" download>Template (CSV)</a>
+            <a class="template-link" href="download_courses_template_excel.php">Template (Excel)</a>
+        </div>
+        <form id="importForm" method="POST" enctype="multipart/form-data" class="import-form" style="display:flex; flex-direction:column; align-items:center; gap:12px;">
             <input type="hidden" name="action" value="import">
-            <div class="form-group" style="min-width:320px;">
-                <label>File (.csv, .xlsx, .xls)</label>
-                <input type="file" name="csv_file" accept=".csv,.xlsx,.xls" required>
-                <div class="small" style="margin-top:8px; display:flex; gap:12px; flex-wrap:wrap;">
-                    <a class="template-link" href="../assets/templates/courses_import_template.csv" download>Download template (CSV)</a>
-                    <a class="template-link" href="download_courses_template_excel.php">Download template (Excel)</a>
-                </div>
+            <div class="modern-file-upload" style="max-width:520px; margin:0 auto;">
+                <input id="importFile" type="file" name="csv_file" accept=".csv,.xlsx,.xls" required>
+                <label for="importFile" id="fileDrop" class="file-upload-label" title="Drop a .csv/.xlsx file here or click to browse">
+                    <span class="file-icon">📁</span>
+                    <span class="file-text">
+                        <strong>Choose file</strong>
+                        <small id="fileName" class="muted" style="display:block;">.csv, .xlsx, .xls</small>
+                    </span>
+                </label>
             </div>
-            <button type="submit" class="btn primary">Import</button>
+            <div style="display:flex; gap:12px; align-items:center; justify-content:center; margin-top:12px; flex-wrap:wrap;">
+                <button id="importBtn" type="submit" class="btn primary" disabled>Import</button>
+                <div id="importProgress" class="progress-indeterminate" style="display:none; width:220px;"><span class="ind-bar"></span></div>
+            </div>
         </form>
         <div class="small" style="margin-top:10px; color:#444;">
-            Tip: For Excel, keep headers exact. Units/year/semester should be numbers.
+            Tip: Keep headers exact. Units/year/semester should be numbers.
         </div>
     </div>
 
@@ -521,7 +535,7 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
                         <th>Course</th>
                         <th>Section</th>
                         <th>Room</th>
-                        <th>Capacity</th>
+                        <th class="text-right">Capacity</th>
                         <th>Enrolled</th>
                         <th>Instructors</th>
                         <th>Actions</th>
@@ -533,12 +547,20 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
                             <td><?php echo htmlspecialchars($s['course_code'] . ' - ' . $s['course_name']); ?></td>
                             <td><?php echo htmlspecialchars($s['section_code']); ?></td>
                             <td><?php echo htmlspecialchars($s['room_code'] ?? 'No Room'); ?></td>
-                            <td><?php echo htmlspecialchars($s['capacity']); ?></td>
-                            <td><?php echo htmlspecialchars($s['enrolled_count']); ?>/<?php echo htmlspecialchars($s['capacity']); ?></td>
-                            <td><?php echo htmlspecialchars($s['instructors'] ?? 'None'); ?></td>
+                            <td class="text-right"><span class="badge badge-secondary"><?php echo htmlspecialchars($s['capacity']); ?></span></td>
                             <td>
-                                <button class="btn" onclick="editSection(<?php echo $s['id']; ?>)">Edit</button>
-                                <button class="btn danger" onclick="deleteSection(<?php echo $s['id']; ?>)">Delete</button>
+                                <?php $cap = (int)($s['capacity'] ?? 0); $en = (int)($s['enrolled_count'] ?? 0); $pct = $cap>0 ? min(100, max(0, intval(($en/$cap)*100))) : 0; ?>
+                                <div class="table-enrolled d-flex" style="display:flex;align-items:center;gap:8px;min-width:140px;">
+                                    <div class="meter" style="flex:1;">
+                                        <span style="width: <?php echo $pct; ?>%"></span>
+                                    </div>
+                                    <span class="badge badge-light text-nowrap"><?php echo $en; ?>/<?php echo $cap; ?></span>
+                                </div>
+                            </td>
+                            <td><?php echo htmlspecialchars($s['instructors'] ?? 'None'); ?></td>
+                            <td class="text-nowrap">
+                                <button class="btn sm" onclick="editSection(<?php echo $s['id']; ?>)">Edit</button>
+                                <button class="btn sm danger" onclick="deleteSection(<?php echo $s['id']; ?>)">Delete</button>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -567,7 +589,7 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
     <tr>
         <th>Course Code</th>
         <th>Course Name</th>
-        <th>Units</th>
+        <th class="text-right">Units</th>
         <th>Actions</th>
     </tr>
 </thead>
@@ -576,14 +598,14 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
         <tr>
             <td><?php echo htmlspecialchars($c['course_code']); ?></td>
             <td><?php echo htmlspecialchars($c['course_name']); ?></td>
-            <td><?php echo htmlspecialchars($c['units'] ?? ''); ?></td>
-            <td style="display: flex; align-items: center; padding: 8px;">
-<button class="btn" onclick="editCourse(<?php echo $c['id']; ?>, '<?php echo htmlspecialchars($c['program_id']); ?>', '<?php echo htmlspecialchars($c['course_code']); ?>', '<?php echo htmlspecialchars($c['course_name']); ?>', '<?php echo htmlspecialchars($c['units'] ?? '3'); ?>', '<?php echo htmlspecialchars($c['year_level']); ?>', '<?php echo htmlspecialchars($c['semester']); ?>', '<?php echo htmlspecialchars($c['instructor_id'] ?? ''); ?>')">Edit</button>
-                <button class="btn secondary" onclick="addSection(<?php echo $c['id']; ?>)">Add Section</button>
-                <form method="POST" style="margin-left: 8px;" onsubmit="return confirm('Are you sure you want to delete this course?')">
+            <td class="text-right"><span class="badge badge-secondary"><?php echo htmlspecialchars($c['units'] ?? ''); ?></span></td>
+            <td class="text-nowrap">
+<button class="btn sm" onclick="editCourse(<?php echo $c['id']; ?>, '<?php echo htmlspecialchars($c['program_id']); ?>', '<?php echo htmlspecialchars($c['course_code']); ?>', '<?php echo htmlspecialchars($c['course_name']); ?>', '<?php echo htmlspecialchars($c['units'] ?? '3'); ?>', '<?php echo htmlspecialchars($c['year_level']); ?>', '<?php echo htmlspecialchars($c['semester']); ?>', '<?php echo htmlspecialchars($c['instructor_id'] ?? ''); ?>')">Edit</button>
+                <button class="btn sm secondary" onclick="addSection(<?php echo $c['id']; ?>)">Add Section</button>
+                <form method="POST" style="display:inline-block; margin-left: 8px;" onsubmit="return confirm('Are you sure you want to delete this course?')">
                     <input type="hidden" name="action" value="delete">
                     <input type="hidden" name="id" value="<?php echo $c['id']; ?>">
-                    <button type="submit" class="btn danger">Delete</button>
+                    <button type="submit" class="btn sm danger">Delete</button>
                 </form>
             </td>
         </tr>
@@ -786,6 +808,33 @@ function editCourse(id, programId, courseCode, courseName, units, yearLevel, sem
                 closeModal();
             }
         }
+        // Modern import UI behavior
+        (function(){
+            const input = document.getElementById('importFile');
+            const drop = document.getElementById('fileDrop');
+            const nameEl = document.getElementById('fileName');
+            const btn = document.getElementById('importBtn');
+            const form = document.getElementById('importForm');
+            const prog = document.getElementById('importProgress');
+            if (!input) return;
+            const fmtSize = b => (b>1024*1024)? (b/1024/1024).toFixed(1)+' MB' : (b/1024).toFixed(0)+' KB';
+            const update = () => {
+                const f = input.files && input.files[0];
+                if (f){
+                    nameEl.textContent = `${f.name} • ${fmtSize(f.size)}`;
+                    btn.removeAttribute('disabled');
+                } else {
+                    nameEl.textContent = '.csv, .xlsx, .xls';
+                    btn.setAttribute('disabled','disabled');
+                }
+            };
+            input.addEventListener('change', update);
+            ;['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault(); drop.style.borderColor = 'var(--accent)';}));
+            ;['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{drop.style.borderColor = '#e0e0e0';}));
+            drop.addEventListener('drop', e=>{ e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length){ input.files = e.dataTransfer.files; update(); }});
+            form.addEventListener('submit', ()=>{ btn.textContent='Importing...'; btn.setAttribute('disabled','disabled'); prog.style.display='block'; });
+            update();
+        })();
     </script>
 
     <style>
@@ -852,6 +901,7 @@ function editCourse(id, programId, courseCode, courseName, units, yearLevel, sem
             border: 1px solid #eadcff;
             box-shadow: 0 6px 16px rgba(107, 33, 168, 0.08);
             padding: 18px 20px;
+            text-align: center;
         }
         .import-card h3 { color: #6a0dad; margin: 0 0 8px; }
         .import-desc { margin: 6px 0 14px; color: #333; }

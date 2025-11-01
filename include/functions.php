@@ -313,6 +313,24 @@ function find_program_id(PDO $pdo, $programInput) {
     return null;
 }
 
+
+/**
+ * Fetch attendance weights (percentages) per period for a section from assessment_criteria rows named 'Attendance'.
+ * Returns array like ['prelim'=>float,'midterm'=>float,'finals'=>float]. Missing periods are omitted.
+ */
+function get_attendance_weights(PDO $pdo, int $section_id): array {
+    $out = [];
+    $stmt = $pdo->prepare("SELECT period, percentage FROM assessment_criteria WHERE section_id = ? AND LOWER(TRIM(name)) = 'attendance'");
+    $stmt->execute([$section_id]);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $per = strtolower($r['period'] ?? '');
+        if (in_array($per, ['prelim','midterm','finals'], true)) {
+            $out[$per] = floatval($r['percentage']);
+        }
+    }
+    return $out;
+}
+
 ?>
 <?php
 /**
@@ -353,4 +371,89 @@ function lee_remarks(?float $leeAverage) {
     if ($leeAverage > 3.0 && $leeAverage < 5.0) return ['Conditional', 'text-warning'];
     if ($leeAverage >= 5.0) return ['Failed', 'text-danger'];
     return ['Incomplete', 'text-secondary'];
+}
+
+/**
+ * Compute overall percent for a student's course based on assessment items.
+ * Returns null if no assessments or totals.
+ */
+function course_overall_percent(PDO $pdo, int $student_id, int $course_id): ?float {
+    // Enrollment id for this student/course
+    $enr = $pdo->prepare("SELECT id FROM enrollments WHERE student_id = ? AND course_id = ? LIMIT 1");
+    $enr->execute([$student_id, $course_id]);
+    $enrollment_id = (int)$enr->fetchColumn();
+    if (!$enrollment_id) return null;
+
+    // Total possible and total earned across all items for this course
+    $sql = "
+        SELECT SUM(ai.total_score) AS possible,
+               COUNT(ai.id) AS items
+        FROM assessment_items ai
+        INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
+        WHERE ac.course_id = ?
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$course_id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $possible = (float)($row['possible'] ?? 0);
+    if ($possible <= 0) return null;
+
+    // Earned for this enrollment across items (grades for this enrollment only)
+    $gstmt = $pdo->prepare("SELECT SUM(grade) AS earned FROM grades WHERE enrollment_id = ?");
+    $gstmt->execute([$enrollment_id]);
+    $earned = (float)($gstmt->fetchColumn() ?? 0);
+
+    $percent = ($earned / $possible) * 100.0;
+    // clamp 0-100
+    if ($percent < 0) $percent = 0; if ($percent > 100) $percent = 100;
+    return $percent;
+}
+
+/**
+ * Determine if a student passed all courses for a given program year.
+ * Rule: overall percent >= 75 in every course of that year (ignores courses with no assessments).
+ */
+function student_passed_year(PDO $pdo, int $student_id, int $program_id, int $year_level): bool {
+    $c = $pdo->prepare("SELECT id FROM courses WHERE program_id = ? AND year_level = ?");
+    $c->execute([$program_id, $year_level]);
+    $courses = $c->fetchAll(PDO::FETCH_COLUMN, 0);
+    if (!$courses) return false; // no courses -> cannot pass
+
+    foreach ($courses as $cid) {
+        $pct = course_overall_percent($pdo, $student_id, (int)$cid);
+        if ($pct === null) return false; // incomplete -> not passed
+        if ($pct < 75.0) return false; // failed this course
+    }
+    return true;
+}
+
+/**
+ * Promote eligible students from a year to the next within a program.
+ * - Only those who pass all courses in from_year are promoted.
+ * - Updates users.year_level and auto-enrolls into next year's courses for active SY.
+ * Returns array with counts and details.
+ */
+function promote_students(PDO $pdo, int $program_id, int $from_year): array {
+    $next_year = $from_year + 1;
+    // Find students in this program and year
+    $st = $pdo->prepare("SELECT id FROM users WHERE role='student' AND program_id = ? AND year_level = ? AND status = 'active'");
+    $st->execute([$program_id, $from_year]);
+    $studentIds = $st->fetchAll(PDO::FETCH_COLUMN, 0);
+
+    $promoted = 0; $checked = 0; $failed = [];
+    foreach ($studentIds as $sid) {
+        $checked++;
+        if (student_passed_year($pdo, (int)$sid, $program_id, $from_year)) {
+            // Update year level
+            $upd = $pdo->prepare("UPDATE users SET year_level = ? WHERE id = ?");
+            $upd->execute([$next_year, $sid]);
+            // Auto-enroll into next year's courses for active SY
+            try { auto_enroll_student($pdo, (int)$sid, $program_id, $next_year); } catch (Exception $e) { /* ignore */ }
+            $promoted++;
+        } else {
+            $failed[] = (int)$sid;
+        }
+    }
+
+    return ['checked'=>$checked, 'promoted'=>$promoted, 'failed'=> $failed, 'next_year'=>$next_year];
 }

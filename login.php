@@ -92,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - <?php echo SITE_NAME; ?></title>
+    <link rel="icon" type="image/svg+xml" href="public/assets/icon/logo.svg">
     <style>
         /* Global Styles */
         * {

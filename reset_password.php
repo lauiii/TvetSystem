@@ -64,6 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="utf-8">
     <title>Reset Password — <?php echo htmlspecialchars(SITE_NAME); ?></title>
+    <link rel="icon" type="image/svg+xml" href="public/assets/icon/logo.svg">
     <style>
         body{font-family:Segoe UI,Arial;background:#f3f4f6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
         .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:22px;max-width:420px;width:100%}

@@ -182,7 +182,7 @@ try {
         <!-- Main Content -->
         <main class="main-content">
             <!-- Mobile Menu Toggle -->
-            <button class="menu-toggle" onclick="toggleSidebar()">☰ Menu</button>
+            <button class="menu-toggle">☰ Menu</button>
             
             <!-- Header -->
             <?php $pageTitle = 'Dashboard'; require __DIR__ . '/inc/header.php'; ?>

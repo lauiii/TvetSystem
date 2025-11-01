@@ -216,6 +216,19 @@ if ($sessionId && count($students) > 0) {
           No class started for this date.
         <?php endif; ?>
       </div>
+      <?php 
+        // Attendance weight sync from Assessments
+        $attWeights = get_attendance_weights($pdo, (int)$sectionId);
+        if (!empty($attWeights)) {
+            $parts = [];
+            foreach (['prelim','midterm','finals'] as $p) {
+                if (isset($attWeights[$p])) { $parts[] = ucfirst($p) . ': ' . number_format($attWeights[$p], 0) . '%'; }
+            }
+            if (!empty($parts)) {
+                echo '<div class="muted" style="margin-top:6px; color:#6b7280">Attendance Weight — ' . htmlspecialchars(implode(' • ', $parts)) . '</div>';
+            }
+        }
+      ?>
     </div>
 
     <div class="card">
