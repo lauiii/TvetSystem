@@ -8,16 +8,25 @@ requireRole('admin');
 $error = '';
 $msg = '';
 
+// Ensure schema: add active_semester column if missing
+try {
+    $cols = $pdo->query("SHOW COLUMNS FROM school_years")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('active_semester', $cols, true)) {
+        $pdo->exec("ALTER TABLE school_years ADD COLUMN active_semester TINYINT(1) NOT NULL DEFAULT 1 AFTER status");
+    }
+} catch (Exception $e) { /* ignore */ }
+
 // Add school year
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add') {
     $year = sanitize($_POST['year'] ?? '');
+    $sem = (int)($_POST['active_semester'] ?? 1);
 
     if (empty($year)) {
         $error = 'Year is required.';
     } else {
         try {
-            $stmt = $pdo->prepare('INSERT INTO school_years (year, status) VALUES (?, ?)');
-            $stmt->execute([$year, 'inactive']);
+            $stmt = $pdo->prepare('INSERT INTO school_years (year, status, active_semester) VALUES (?, ?, ?)');
+            $stmt->execute([$year, 'inactive', in_array($sem,[1,2,3],true)?$sem:1]);
             $msg = 'School year added.';
         } catch (Exception $e) {
             $error = 'Failed to add school year: ' . $e->getMessage();
@@ -25,18 +34,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
     }
 }
 
-// Set active
+// Set active and optionally update active semester
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_active') {
     $id = (int)($_POST['id'] ?? 0);
+    $sem = isset($_POST['active_semester']) ? (int)$_POST['active_semester'] : null;
     if ($id > 0) {
         try {
-            // set all inactive then set this active
+            // set all inactive then set this active; optionally set semester
             $pdo->beginTransaction();
             $pdo->exec("UPDATE school_years SET status = 'inactive'");
-            $stmt = $pdo->prepare("UPDATE school_years SET status = 'active' WHERE id = ?");
-            $stmt->execute([$id]);
+            if ($sem !== null && in_array($sem,[1,2,3],true)) {
+                $stmt = $pdo->prepare("UPDATE school_years SET status = 'active', active_semester = ? WHERE id = ?");
+                $stmt->execute([$sem, $id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE school_years SET status = 'active' WHERE id = ?");
+                $stmt->execute([$id]);
+            }
             $pdo->commit();
-            $msg = 'Set active school year.';
+            $msg = 'Set active school year' . ($sem?" (Semester $sem)":"") . '.';
         } catch (Exception $e) {
             $pdo->rollBack();
             $error = 'Failed to set active: ' . $e->getMessage();
@@ -100,7 +115,14 @@ $years = $pdo->query("SELECT * FROM school_years ORDER BY $orderBy")->fetchAll()
         <h3>Add School Year</h3>
         <form method="POST">
             <input type="hidden" name="action" value="add">
-            <div style="margin-bottom:8px;"><label>Year (e.g. 2024-2025)</label><br><input type="text" name="year" required></div>
+            <div class="form-row"><label>Year (e.g. 2024-2025)</label><br><input type="text" name="year" required></div>
+            <div class="form-row"><label>Default Active Semester</label><br>
+                <select name="active_semester" required>
+                    <option value="1">1st Semester</option>
+                    <option value="2">2nd Semester</option>
+                    <option value="3">Summer</option>
+                </select>
+            </div>
             <button class="btn primary">Add School Year</button>
         </form>
     </div>
@@ -118,13 +140,17 @@ $years = $pdo->query("SELECT * FROM school_years ORDER BY $orderBy")->fetchAll()
                         <div style="color:#666;font-size:13px">Status: <?php echo htmlspecialchars($y['status']); ?></div>
                     </div>
                     <div>
-                        <?php if ($y['status'] !== 'active'): ?>
                         <form method="POST" style="display:inline-block">
                             <input type="hidden" name="action" value="set_active">
                             <input type="hidden" name="id" value="<?php echo $y['id']; ?>">
-                            <button class="btn">Set Active</button>
+                            <select name="active_semester" style="margin-right:8px">
+                                <?php $semCur = (int)($y['active_semester'] ?? 1); ?>
+                                <option value="1" <?php echo $semCur===1?'selected':''; ?>>1st</option>
+                                <option value="2" <?php echo $semCur===2?'selected':''; ?>>2nd</option>
+                                <option value="3" <?php echo $semCur===3?'selected':''; ?>>Summer</option>
+                            </select>
+                            <button class="btn"><?php echo $y['status'] === 'active' ? 'Update Semester' : 'Set Active'; ?></button>
                         </form>
-                        <?php endif; ?>
                         <form method="POST" style="display:inline-block;margin-left:8px" onsubmit="return confirm('Delete school year?')">
                             <input type="hidden" name="action" value="delete">
                             <input type="hidden" name="id" value="<?php echo $y['id']; ?>">

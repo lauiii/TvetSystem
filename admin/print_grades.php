@@ -144,6 +144,32 @@ foreach ($possibleMap as $cid => $periods) {
         </table>
     <?php endif; ?>
 
+    <?php
+        // Signature block: TVET Head (only for grading evaluations)
+        $tvetHead = 'TVET HEAD';
+        try {
+            $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+            $nameExpr = '';
+            if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
+                $nameExpr = "CONCAT(first_name,' ',last_name) as nm";
+            } elseif (in_array('name', $ucols)) {
+                $nameExpr = "name as nm";
+            }
+            if ($nameExpr !== '') {
+                $st = $pdo->query("SELECT $nameExpr FROM users WHERE role='admin' AND (status IS NULL OR status='active') ORDER BY id LIMIT 1");
+                $nm = trim((string)($st->fetchColumn() ?: ''));
+                if ($nm !== '') $tvetHead = strtoupper($nm);
+            }
+        } catch (Exception $e) { /* ignore */ }
+    ?>
+
+    <div style="margin-top:40px; display:flex; justify-content:space-around; gap:40px;">
+        <div style="text-align:center; min-width:240px;">
+            <div style="border-top:1px solid #000; padding-top:6px; font-weight:700; letter-spacing:.02em;"><?php echo htmlspecialchars($tvetHead); ?></div>
+            <div style="font-size:12px; color:#555;">TVET HEAD</div>
+        </div>
+    </div>
+
     <div class="no-print" style="margin-top:10px;">
         <button onclick="window.print()" style="padding:6px 12px; background:#9b25e7; color:#fff; border:none; border-radius:6px;">Print</button>
     </div>

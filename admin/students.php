@@ -62,7 +62,7 @@ if ($q !== '') {
     }
 }
 
-$sql .= " ORDER BY u.id DESC LIMIT 200";
+$sql .= " GROUP BY u.id ORDER BY u.id DESC LIMIT 200";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);

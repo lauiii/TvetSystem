@@ -33,6 +33,7 @@ if (!isset($active)) $active = '';
         <a href="grades.php" class="menu-item <?php echo $active === 'grades' ? 'active' : '' ?>">📝 Grades</a>
         <a href="reports.php" class="menu-item <?php echo $active === 'reports' ? 'active' : '' ?>">📊 Reports</a>
         <a href="promotions.php" class="menu-item <?php echo $active === 'promotions' ? 'active' : '' ?>">⬆️ Promotions</a>
+        <a href="deadlines.php" class="menu-item <?php echo $active === 'deadlines' ? 'active' : '' ?>">⏰ Deadlines</a>
         <a href="settings.php" class="menu-item <?php echo $active === 'settings' ? 'active' : '' ?>">⚙️ Settings</a>
     </nav>
 </aside>

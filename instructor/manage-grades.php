@@ -32,6 +32,34 @@ if (!$section) {
     exit;
 }
 
+// Resolve instructor and TVET Head names for printing
+$instructorName = '';
+try {
+    $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+    if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
+        $st = $pdo->prepare("SELECT CONCAT(first_name,' ',last_name) AS nm FROM users WHERE id = ? LIMIT 1");
+        $st->execute([$instructorId]);
+        $instructorName = trim((string)$st->fetchColumn());
+    } elseif (in_array('name', $ucols)) {
+        $st = $pdo->prepare("SELECT name AS nm FROM users WHERE id = ? LIMIT 1");
+        $st->execute([$instructorId]);
+        $instructorName = trim((string)$st->fetchColumn());
+    }
+} catch (Exception $e) { /* ignore */ }
+
+$tvetHeadName = 'TVET HEAD';
+try {
+    $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+    $nameExpr = '';
+    if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) { $nameExpr = "CONCAT(first_name,' ',last_name) as nm"; }
+    elseif (in_array('name', $ucols)) { $nameExpr = "name as nm"; }
+    if ($nameExpr !== '') {
+        $st = $pdo->query("SELECT $nameExpr FROM users WHERE role='admin' AND (status IS NULL OR status='active') ORDER BY id LIMIT 1");
+        $nm = trim((string)($st->fetchColumn() ?: ''));
+        if ($nm !== '') $tvetHeadName = strtoupper($nm);
+    }
+} catch (Exception $e) { /* ignore */ }
+
 // Auto-provision assessment structure for missing periods so instructors don't have to re-create items
 try {
     // Verify which periods already exist for this course
@@ -201,6 +229,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
               . '<strong>When:</strong> ' . date('Y-m-d H:i:s') . '</p>'
               . '<p>You can review in the system.</p>';
         @sendNotificationEmail('ascbtvet@gmail.com', 'Admin', $subject, $body);
+        // In-app notification to current admin(s)
+        try {
+            require_once __DIR__ . '/../include/functions.php';
+            $admins = $pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll(PDO::FETCH_COLUMN);
+            if ($admins) {
+                $title = 'Grades Submitted by ' . ($instrName ?: 'Instructor');
+                $msg = 'Instructor ' . ($instrName ?: 'Unknown') . ' submitted grades for ' . $course . ' (Section ' . $sec . ($semName !== '' ? (', Sem ' . $semName) : '') . ').';
+                notify_users($pdo, array_map('intval',$admins), $title, $msg, 'info', null, null);
+            }
+        } catch (Exception $x) { /* ignore */ }
     } catch (Exception $e) { /* ignore email errors */ }
 
     if ($isAjax) {
@@ -604,6 +642,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
             </div>
         </div>
     </div>
+
+    <!-- Print-only signatures -->
+    <div style="margin-top:40px; display:none;" class="print-signatures">
+        <div style="display:flex; justify-content:space-around; gap:40px;">
+            <div style="text-align:center; min-width:240px;">
+                <div style="border-top:1px solid #000; padding-top:6px; font-weight:700; letter-spacing:.02em;">
+                    <?php echo htmlspecialchars($tvetHeadName); ?>
+                </div>
+                <div style="font-size:12px; color:#555;">TVET HEAD</div>
+            </div>
+            <div style="text-align:center; min-width:240px;">
+                <div style="border-top:1px solid #000; padding-top:6px; font-weight:700; letter-spacing:.02em;">
+                    <?php echo htmlspecialchars($instructorName ?: 'INSTRUCTOR'); ?>
+                </div>
+                <div style="font-size:12px; color:#555;">INSTRUCTOR</div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @media print {
+            .page-header, .controls, .notice, .btn, .menu-toggle { display:none !important; }
+            .print-signatures { display:block !important; }
+        }
+    </style>
 
     <script>
     // Page data from server

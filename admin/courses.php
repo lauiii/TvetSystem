@@ -126,10 +126,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
         $ext = strtolower(pathinfo($_FILES['csv_file']['name'], PATHINFO_EXTENSION));
 
         $imported = 0; $skipped = 0;
-        // cache programs by code
+        // cache programs by code (schema-adaptive)
         $progIdx = [];
-        $progRows = $pdo->query("SELECT id, code FROM programs")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($progRows as $pr) { $progIdx[strtolower($pr['code'])] = (int)$pr['id']; }
+        $progCols = [];
+        try { $progCols = $pdo->query("SHOW COLUMNS FROM programs")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $progCols = []; }
+        $codeCol = null;
+        foreach (['code','program_code','short_code','abbr','shortname','short_name'] as $cand) {
+            if (in_array($cand, $progCols, true)) { $codeCol = $cand; break; }
+        }
+        if (!$codeCol) { throw new Exception("Programs table is missing a code column (expected one of: code, program_code, short_code)"); }
+        $progRows = $pdo->query("SELECT id, {$codeCol} AS code FROM programs")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($progRows as $pr) { if (!empty($pr['code'])) { $progIdx[strtolower($pr['code'])] = (int)$pr['id']; } }
         $ins = $pdo->prepare('INSERT INTO courses (program_id, course_code, course_name, units, year_level, semester) VALUES (?, ?, ?, ?, ?, ?)');
 
         if ($ext === 'csv') {
@@ -161,7 +168,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 throw new Exception('Excel import requires PhpSpreadsheet. Run: composer require phpoffice/phpspreadsheet, or upload a CSV instead.');
             }
             \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance()->setCalculationCacheEnabled(false);
-            $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReaderForFile($tmp);
+            $readerType = ($ext === 'xlsx') ? 'Xlsx' : 'Xls';
+            $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReader($readerType);
             if (method_exists($reader, 'setReadDataOnly')) { $reader->setReadDataOnly(true); }
             if (method_exists($reader, 'setReadEmptyCells')) { $reader->setReadEmptyCells(false); }
             $spreadsheet = $reader->load($tmp);
@@ -514,7 +522,7 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
                 </label>
             </div>
             <div style="display:flex; gap:12px; align-items:center; justify-content:center; margin-top:12px; flex-wrap:wrap;">
-                <button id="importBtn" type="submit" class="btn primary" disabled>Import</button>
+                <button id=\"importBtn\" type=\"submit\" class=\"btn primary\">Import</button>
                 <div id="importProgress" class="progress-indeterminate" style="display:none; width:220px;"><span class="ind-bar"></span></div>
             </div>
         </form>
@@ -822,10 +830,8 @@ function editCourse(id, programId, courseCode, courseName, units, yearLevel, sem
                 const f = input.files && input.files[0];
                 if (f){
                     nameEl.textContent = `${f.name} • ${fmtSize(f.size)}`;
-                    btn.removeAttribute('disabled');
                 } else {
                     nameEl.textContent = '.csv, .xlsx, .xls';
-                    btn.setAttribute('disabled','disabled');
                 }
             };
             input.addEventListener('change', update);

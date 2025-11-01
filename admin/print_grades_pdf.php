@@ -163,6 +163,39 @@ ob_start();
             </tbody>
         </table>
     <?php endif; ?>
+
+    <?php
+        // Signature block: TVET Head only for grading evaluations (PDF)
+        $tvetHead = 'TVET HEAD';
+        try {
+            $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+            $nameExpr = '';
+            if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
+                $nameExpr = "CONCAT(first_name,' ',last_name) as nm";
+            } elseif (in_array('name', $ucols)) {
+                $nameExpr = "name as nm";
+            }
+            if ($nameExpr !== '') {
+                $st = $pdo->query("SELECT $nameExpr FROM users WHERE role='admin' AND (status IS NULL OR status='active') ORDER BY id LIMIT 1");
+                $nm = trim((string)($st->fetchColumn() ?: ''));
+                if ($nm !== '') $tvetHead = strtoupper($nm);
+            }
+        } catch (Exception $e) { /* ignore */ }
+    ?>
+
+    <div style="margin-top:36px; width:100%;">
+        <table style="width:100%; border:0;">
+            <tr>
+                <td style="width:50%; text-align:center; border:0;">
+                    <div style="border-top:1px solid #000; margin:0 40px; padding-top:4px; font-weight:700; letter-spacing:.02em; ">
+                        <?php echo htmlspecialchars($tvetHead); ?>
+                    </div>
+                    <div style="font-size:11px; color:#555;">TVET HEAD</div>
+                </td>
+                <td style="width:50%; text-align:center; border:0;">&nbsp;</td>
+            </tr>
+        </table>
+    </div>
 </body>
 </html>
 <?php

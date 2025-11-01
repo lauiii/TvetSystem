@@ -288,6 +288,8 @@ $pendingFlags = $stmt->fetch()['count'];
                 <h1>Welcome, <?php echo htmlspecialchars($_SESSION['name']); ?>!</h1>
                 <p>Instructor Dashboard</p>
             </div>
+            <?php require_once __DIR__.'/../include/functions.php'; $unread = get_unread_count($pdo, (int)$_SESSION['user_id']); ?>
+            <a href="notifications.php" class="btn-logout" style="background:#6a0dad; margin-right:8px; position:relative;">🔔 Notifications<?php if($unread>0): ?><span style="position:absolute; top:-6px; right:-6px; background:#e11d48; color:#fff; border-radius:999px; padding:2px 6px; font-size:11px; font-weight:700; line-height:1; "><?php echo (int)$unread; ?></span><?php endif; ?></a>
             <a href="../logout.php" class="btn-logout">Logout</a>
         </div>
     </div>

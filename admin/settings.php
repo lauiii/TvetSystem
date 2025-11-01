@@ -1,19 +1,40 @@
 <?php
 /**
- * Admin Settings — update admin email and password
+ * Admin Settings — update admin name, email and password
  */
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../include/functions.php';
 requireRole('admin');
 
 $adminId = $_SESSION['user_id'];
 $error = '';
 $msg = '';
 
-// Fetch current admin
-$stmt = $pdo->prepare("SELECT first_name, last_name, email, password FROM users WHERE id = ? AND role = 'admin' LIMIT 1");
+// Detect user columns
+$userCols = [];
+try {
+    $userCols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+} catch (Exception $e) { $userCols = []; }
+$hasFirstLast = in_array('first_name', $userCols) && in_array('last_name', $userCols);
+$hasFullName = in_array('name', $userCols);
+
+// Fetch current admin (adaptive)
+if ($hasFirstLast) {
+    $stmt = $pdo->prepare("SELECT first_name, last_name, email, password FROM users WHERE id = ? AND role = 'admin' LIMIT 1");
+} elseif ($hasFullName) {
+    $stmt = $pdo->prepare("SELECT name, email, password FROM users WHERE id = ? AND role = 'admin' LIMIT 1");
+} else {
+    $stmt = $pdo->prepare("SELECT email, password FROM users WHERE id = ? AND role = 'admin' LIMIT 1");
+}
 $stmt->execute([$adminId]);
 $admin = $stmt->fetch();
 if (!$admin) { die('Admin not found'); }
+
+// Display name (single field)
+$displayName = '';
+if ($hasFullName) { $displayName = trim((string)($admin['name'] ?? '')); }
+elseif ($hasFirstLast) { $displayName = trim(((string)($admin['first_name'] ?? '')) . ' ' . ((string)($admin['last_name'] ?? ''))); }
+if ($displayName === '') { $displayName = $_SESSION['name'] ?? ''; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $newEmail = trim($_POST['email'] ?? '');
@@ -21,39 +42,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $newPass = (string)($_POST['new_password'] ?? '');
     $confirmPass = (string)($_POST['confirm_password'] ?? '');
 
-    if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Please enter a valid email.';
-    } else {
-        try {
-            // Update email
-            if ($newEmail !== $admin['email']) {
-                $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? AND id != ? LIMIT 1");
-                $chk->execute([$newEmail, $adminId]);
-                if ($chk->fetch()) {
-                    throw new Exception('Email is already in use.');
-                }
-                $upd = $pdo->prepare("UPDATE users SET email = ? WHERE id = ?");
-                $upd->execute([$newEmail, $adminId]);
-                $_SESSION['email'] = $newEmail;
+    // Full name update (single field)
+    try {
+        $full = trim($_POST['full_name'] ?? '');
+        if ($full !== '') {
+            if ($hasFullName) {
+                $upd = $pdo->prepare("UPDATE users SET name = ? WHERE id = ?");
+                $upd->execute([$full, $adminId]);
+                $admin['name'] = $full;
+            } elseif ($hasFirstLast) {
+                // Split into first and last (last word as last name)
+                $parts = preg_split('/\s+/', $full);
+                $last = array_pop($parts) ?? '';
+                $first = trim(implode(' ', $parts));
+                if ($first === '' && $last !== '') { $first = $last; $last = ''; }
+                $upd = $pdo->prepare("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?");
+                $upd->execute([$first, $last, $adminId]);
+                $admin['first_name'] = $first; $admin['last_name'] = $last;
             }
-            // Update password if provided
-            if ($newPass !== '' || $confirmPass !== '') {
-                if ($newPass !== $confirmPass) {
-                    throw new Exception('New password and confirmation do not match.');
+            $_SESSION['name'] = $full;
+            $displayName = $full;
+        }
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+    }
+
+    if (!$error) {
+        if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+            $error = 'Please enter a valid email.';
+        } else {
+            try {
+                // Update email
+                if (!isset($admin['email']) || $newEmail !== $admin['email']) {
+                    $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? AND id != ? LIMIT 1");
+                    $chk->execute([$newEmail, $adminId]);
+                    if ($chk->fetch()) {
+                        throw new Exception('Email is already in use.');
+                    }
+                    $upd = $pdo->prepare("UPDATE users SET email = ? WHERE id = ?");
+                    $upd->execute([$newEmail, $adminId]);
+                    $_SESSION['email'] = $newEmail;
+                    $admin['email'] = $newEmail;
                 }
-                if (strlen($newPass) < 8) {
-                    throw new Exception('New password must be at least 8 characters.');
+                // Update password if provided
+                if ($newPass !== '' || $confirmPass !== '') {
+                    if ($newPass !== $confirmPass) {
+                        throw new Exception('New password and confirmation do not match.');
+                    }
+                    if (strlen($newPass) < 8) {
+                        throw new Exception('New password must be at least 8 characters.');
+                    }
+                    if (!password_verify($currentPass, $admin['password'])) {
+                        throw new Exception('Current password is incorrect.');
+                    }
+                    $hash = password_hash($newPass, PASSWORD_BCRYPT);
+                    $upd = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
+                    $upd->execute([$hash, $adminId]);
                 }
-                if (!password_verify($currentPass, $admin['password'])) {
-                    throw new Exception('Current password is incorrect.');
-                }
-                $hash = password_hash($newPass, PASSWORD_BCRYPT);
-                $upd = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
-                $upd->execute([$hash, $adminId]);
+                $msg = 'Settings updated.';
+            } catch (Exception $e) {
+                $error = $e->getMessage();
             }
-            $msg = 'Settings updated.';
-        } catch (Exception $e) {
-            $error = $e->getMessage();
         }
     }
 }
@@ -84,8 +133,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           <h3>Account</h3>
           <form method="POST">
             <div class="form-group">
+              <label>Full Name</label>
+              <input type="text" name="full_name" value="<?php echo htmlspecialchars($displayName); ?>" class="form-control" required>
+            </div>
+
+            <div class="form-group">
               <label>Email</label>
-              <input type="email" name="email" value="<?php echo htmlspecialchars($admin['email']); ?>" required class="form-control">
+              <input type="email" name="email" value="<?php echo htmlspecialchars($admin['email'] ?? ''); ?>" required class="form-control">
             </div>
             <hr style="margin:16px 0;">
             <h4>Change Password</h4>

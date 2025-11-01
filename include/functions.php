@@ -183,19 +183,26 @@ function create_user(PDO $pdo, $firstName, $lastName, $email, $program_id = null
  * Uses the active school year (status='active') when inserting enrollments.
  * Now enrolls into sections with capacity checks.
  */
-function auto_enroll_student(PDO $pdo, $user_id, $program_id, $year_level) {
-    // Find active school year
-    $stmt = $pdo->prepare("SELECT id FROM school_years WHERE status = 'active' ORDER BY id DESC LIMIT 1");
+function auto_enroll_student(PDO $pdo, $user_id, $program_id, $year_level, ?int $semester = null) {
+    // Find active school year and active semester (schema-adaptive)
+    $stmt = $pdo->prepare("SELECT id, 
+        CASE 
+            WHEN EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'school_years' AND COLUMN_NAME = 'active_semester') 
+            THEN active_semester ELSE 1 END AS active_semester
+        FROM school_years WHERE status = 'active' ORDER BY id DESC LIMIT 1");
     $stmt->execute();
-    $sy = $stmt->fetchColumn();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $sy = $row['id'] ?? null;
+    $activeSemester = (int)($row['active_semester'] ?? 1);
     if (!$sy) {
         // no active school year, cannot enroll
         return ['success' => false, 'error' => 'No active school year'];
     }
+    $targetSemester = $semester ?? $activeSemester;
 
-    // Get courses for program & year
-    $coursesStmt = $pdo->prepare("SELECT id FROM courses WHERE program_id = ? AND year_level = ?");
-    $coursesStmt->execute([$program_id, $year_level]);
+    // Get courses for program & year (and semester)
+    $coursesStmt = $pdo->prepare("SELECT id FROM courses WHERE program_id = ? AND year_level = ? AND semester = ?");
+    $coursesStmt->execute([$program_id, $year_level, $targetSemester]);
     $courses = $coursesStmt->fetchAll(PDO::FETCH_COLUMN);
 
     if (!$courses) {
@@ -456,4 +463,198 @@ function promote_students(PDO $pdo, int $program_id, int $from_year): array {
     }
 
     return ['checked'=>$checked, 'promoted'=>$promoted, 'failed'=> $failed, 'next_year'=>$next_year];
+}
+
+// =============================
+// Notifications helpers (schema-adaptive)
+// =============================
+/** Determine available columns in notifications table */
+function _notif_cols(PDO $pdo): array {
+    static $cols = null;
+    if ($cols !== null) return $cols;
+    try { $cols = $pdo->query("SHOW COLUMNS FROM notifications")->fetchAll(PDO::FETCH_COLUMN); }
+    catch (Exception $e) { $cols = ['id','user_id','message','type','status','created_at']; }
+    return $cols;
+}
+
+/**
+ * Create notifications for specific users. Works whether optional columns exist or not.
+ */
+function notify_users(PDO $pdo, array $userIds, string $title, string $message, string $type='info', ?string $dueAt=null, ?int $deadlineId=null): int {
+    if (empty($userIds)) return 0;
+    $cols = _notif_cols($pdo);
+    $hasTitle = in_array('title',$cols,true);
+    $hasDue   = in_array('due_at',$cols,true);
+    $hasDead  = in_array('deadline_id',$cols,true);
+
+    // Build INSERT dynamically
+    $fields = ['user_id'];
+    $placeholders = ['?'];
+    $paramsOrder = [];
+
+    if ($hasTitle) { $fields[]='title'; $placeholders[]='?'; $paramsOrder[]='title'; }
+    $fields[]='message'; $placeholders[]='?'; $paramsOrder[]='message';
+    $fields[]='type';    $placeholders[]='?'; $paramsOrder[]='type';
+    if ($hasDue)  { $fields[]='due_at'; $placeholders[]='?'; $paramsOrder[]='due_at'; }
+    if ($hasDead) { $fields[]='deadline_id'; $placeholders[]='?'; $paramsOrder[]='deadline_id'; }
+    $fields[]='status'; $placeholders[]="'unread'"; // constant
+    $fields[]='created_at'; $placeholders[]='NOW()';
+
+    $sql = 'INSERT INTO notifications (' . implode(',', $fields) . ') VALUES (' . implode(',', $placeholders) . ')';
+    $ins = $pdo->prepare($sql);
+
+    $cnt = 0;
+    foreach ($userIds as $uid) {
+        $params = [$uid];
+        foreach ($paramsOrder as $k) {
+            if ($k==='title') $params[] = $title;
+            elseif ($k==='message') $params[] = $hasTitle ? $message : ( ($title ? ($title.': ') : '') . $message );
+            elseif ($k==='type') $params[] = $type;
+            elseif ($k==='due_at') $params[] = $dueAt;
+            elseif ($k==='deadline_id') $params[] = $deadlineId;
+        }
+        try { $ins->execute($params); $cnt++; } catch (Exception $e) { /* ignore */ }
+    }
+    return $cnt;
+}
+
+/** Unread count for a user */
+function get_unread_count(PDO $pdo, int $userId): int {
+    try {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND status='unread'");
+        $st->execute([$userId]);
+        return (int)$st->fetchColumn();
+    } catch (Exception $e) { return 0; }
+}
+
+/** List notifications grouped into time buckets */
+function list_notifications_grouped(PDO $pdo, int $userId): array {
+    $cols = _notif_cols($pdo);
+    $select = 'id, message, type, status, created_at';
+    if (in_array('title',$cols,true)) { $select = 'id, title, message, type, status, created_at'; }
+    if (in_array('due_at',$cols,true))  { $select .= ', due_at'; } else { $select .= ', NULL AS due_at'; }
+
+    $st = $pdo->prepare("SELECT $select FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200");
+    $st->execute([$userId]);
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+
+    $today = (new DateTime('now'))->format('Y-m-d');
+    $yesterday = (new DateTime('yesterday'))->format('Y-m-d');
+    $startOfWeek = (new DateTime('monday this week'))->format('Y-m-d');
+
+    $out = ['Today'=>[], 'Yesterday'=>[], 'This Week'=>[], 'Earlier'=>[]];
+    foreach ($rows as $r) {
+        if (!isset($r['title'])) $r['title'] = '';
+        if (!isset($r['due_at'])) $r['due_at'] = null;
+        $d = substr((string)$r['created_at'], 0, 10);
+        if ($d === $today) $out['Today'][] = $r;
+        elseif ($d === $yesterday) $out['Yesterday'][] = $r;
+        elseif ($d >= $startOfWeek) $out['This Week'][] = $r;
+        else $out['Earlier'][] = $r;
+    }
+    return $out;
+}
+
+/** Mark notifications read for a user */
+function mark_notifications_read(PDO $pdo, int $userId, array $ids): int {
+    if (empty($ids)) return 0;
+    $place = implode(',', array_fill(0, count($ids), '?'));
+    $params = $ids; array_unshift($params, $userId);
+    $st = $pdo->prepare("UPDATE notifications SET status='read' WHERE user_id = ? AND id IN ($place)");
+    $st->execute($params);
+    return $st->rowCount();
+}
+
+// =============================
+// Deadlines helpers (schema-adaptive)
+// =============================
+function ensure_deadlines_schema(PDO $pdo): void {
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS deadlines (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            audience ENUM('instructor','student') NOT NULL,
+            due_at DATETIME NOT NULL,
+            remind_days VARCHAR(100) DEFAULT '7,3,1',
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_due (due_at),
+            INDEX idx_audience (audience)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception $e) { /* ignore */ }
+}
+
+function set_deadline(PDO $pdo, string $title, string $audience, string $dueAt, string $remindDays='7,3,1', ?int $createdBy=null): int {
+    ensure_deadlines_schema($pdo);
+    if (!in_array($audience, ['instructor','student'], true)) {
+        throw new InvalidArgumentException('audience must be instructor or student');
+    }
+    if ($createdBy === null && isset($_SESSION['user_id'])) $createdBy = (int)$_SESSION['user_id'];
+    $st = $pdo->prepare("INSERT INTO deadlines (title, audience, due_at, remind_days, created_by) VALUES (?, ?, ?, ?, ?)");
+    $st->execute([$title, $audience, $dueAt, $remindDays, (int)$createdBy]);
+    return (int)$pdo->lastInsertId();
+}
+
+function list_deadlines(PDO $pdo, ?string $audience=null): array {
+    ensure_deadlines_schema($pdo);
+    if ($audience && in_array($audience, ['instructor','student'], true)) {
+        $st = $pdo->prepare("SELECT * FROM deadlines WHERE audience = ? ORDER BY due_at DESC");
+        $st->execute([$audience]);
+        return $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+    return $pdo->query("SELECT * FROM deadlines ORDER BY due_at DESC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function delete_deadline(PDO $pdo, int $id): bool {
+    $st = $pdo->prepare("DELETE FROM deadlines WHERE id = ?");
+    return $st->execute([$id]);
+}
+
+/**
+ * Run notifier to create notifications for deadlines.
+ * Returns number of notifications created.
+ */
+function run_deadline_notifier(PDO $pdo): int {
+    ensure_deadlines_schema($pdo);
+    $now = new DateTime('now');
+    $deadlines = $pdo->query("SELECT * FROM deadlines")->fetchAll(PDO::FETCH_ASSOC);
+    $total = 0;
+    foreach ($deadlines as $d) {
+        $due = new DateTime($d['due_at']);
+        $diffDays = (int)$now->diff($due)->format('%r%a');
+        $rem = array_filter(array_map('intval', explode(',', (string)$d['remind_days'])));
+        $should = false; $badge='info';
+        if ($diffDays === 0) { $should=true; $badge='alert'; }
+        elseif ($diffDays < 0) { $should=true; $badge='warning'; }
+        elseif (in_array($diffDays, $rem, true)) { $should=true; $badge='success'; }
+        if (!$should) continue;
+
+        // recipients by role
+        $role = $d['audience'] === 'instructor' ? 'instructor' : 'student';
+        $st = $pdo->prepare("SELECT id FROM users WHERE role = ? AND status='active'");
+        $st->execute([$role]);
+        $userIds = array_map('intval', array_column($st->fetchAll(PDO::FETCH_ASSOC), 'id'));
+        if (empty($userIds)) continue;
+
+        // Avoid duplicates per user per day for same deadline
+        $cols = _notif_cols($pdo);
+        $hasDead = in_array('deadline_id',$cols,true);
+        $checkSql = $hasDead ? "SELECT 1 FROM notifications WHERE user_id=? AND deadline_id=? AND DATE(created_at)=CURDATE() LIMIT 1"
+                             : "SELECT 1 FROM notifications WHERE user_id=? AND message LIKE ? AND DATE(created_at)=CURDATE() LIMIT 1";
+        $check = $pdo->prepare($checkSql);
+
+        foreach ($userIds as $uid) {
+            if ($hasDead) {
+                $check->execute([$uid, (int)$d['id']]);
+                if ($check->fetch()) continue;
+                $total += notify_users($pdo, [$uid], $d['title'], ($diffDays<0?'Deadline overdue':($diffDays===0?'Deadline due today':'Due in '.$diffDays.' day(s)')), $badge, $d['due_at'], (int)$d['id']);
+            } else {
+                $needle = '%'. $d['title'] .'%';
+                $check->execute([$uid, $needle]);
+                if ($check->fetch()) continue;
+                $total += notify_users($pdo, [$uid], $d['title'], ($diffDays<0?'Deadline overdue':($diffDays===0?'Deadline due today':'Due in '.$diffDays.' day(s)')), $badge, $d['due_at'], null);
+            }
+        }
+    }
+    return $total;
 }
