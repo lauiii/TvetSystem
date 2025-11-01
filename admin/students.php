@@ -74,6 +74,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Students - Admin</title>
+    <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
     <link rel="stylesheet" href="../assets/css/admin-style.css">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <script src="../assets/js/dark-mode.js" defer></script>
@@ -86,7 +87,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="container">
                 <?php $pageTitle = 'Students'; require __DIR__ . '/inc/header.php'; ?>
                 <div class="card">
-<div class="toolbar" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+<div class="toolbar" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:20px;">
     <form method="GET" style="display:flex; gap:8px; align-items:end; flex:1;">
         <div>
             <label style="display:block; font-size:12px; color:#555;">School Year</label>
@@ -104,8 +105,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
     </form>
-    <a class="btn" href="resend_passwords.php">Resend Passwords</a>
-    <a class="btn" href="download-template.php?raw=1">Download Template</a>
+    <a class="btn" href="resend_passwords.php" style="text-decoration:none;">Resend Passwords</a>
 </div>
 
                     <div class="table-responsive">
@@ -117,7 +117,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <th>Email</th>
                                     <th>Program</th>
                                     <th>Year</th>
-                                    <th>Status</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -143,7 +143,7 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             <td><?php echo htmlspecialchars($email); ?></td>
                                             <td><?php echo htmlspecialchars($program); ?></td>
                                             <td><?php echo htmlspecialchars($year); ?></td>
-                                            <td><?php echo htmlspecialchars($status); ?></td>
+                                            <td><button class="btn btn-sm" style="padding:6px 12px;font-size:13px;" onclick="viewProfile(<?php echo $s['id']; ?>)">View Profile</button></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
@@ -154,6 +154,74 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </main>
     </div>
+    
+    <!-- Student Profile Modal -->
+    <div id="profileModal" class="modal">
+        <div class="modal-content" style="max-width:900px;">
+            <span class="modal-close" onclick="closeProfileModal()">&times;</span>
+            <h2 id="profileName" style="color:#6a0dad;margin-bottom:20px;">Student Profile</h2>
+            
+            <div id="profileLoading" style="text-align:center;padding:40px;">
+                <p>Loading...</p>
+            </div>
+            
+            <div id="profileContent" style="display:none;">
+                <!-- Basic Info Card -->
+                <div class="profile-card">
+                    <h3>Basic Information</h3>
+                    <div class="profile-grid">
+                        <div class="profile-item"><strong>Student ID:</strong> <span id="pStudentId"></span></div>
+                        <div class="profile-item"><strong>Email:</strong> <span id="pEmail"></span></div>
+                        <div class="profile-item"><strong>Program:</strong> <span id="pProgram"></span></div>
+                        <div class="profile-item"><strong>Year Level:</strong> <span id="pYearLevel"></span></div>
+                        <div class="profile-item"><strong>Status:</strong> <span id="pStatus"></span></div>
+                        <div class="profile-item"><strong>Enrolled:</strong> <span id="pEnrolled"></span></div>
+                    </div>
+                </div>
+                
+                <!-- Enrolled Courses -->
+                <div class="profile-card">
+                    <h3>Enrolled Courses (Current School Year)</h3>
+                    <div class="table-responsive">
+                        <table class="profile-table">
+                            <thead>
+                                <tr>
+                                    <th>Course Code</th>
+                                    <th>Course Name</th>
+                                    <th>Section</th>
+                                    <th>Instructor</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pCourses">
+                                <tr><td colspan="4" style="text-align:center;color:#999;">No courses</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Grades -->
+                <div class="profile-card">
+                    <h3>Recent Grades</h3>
+                    <div class="table-responsive">
+                        <table class="profile-table">
+                            <thead>
+                                <tr>
+                                    <th>Course</th>
+                                    <th>Grade</th>
+                                    <th>Remarks</th>
+                                    <th>School Year</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pGrades">
+                                <tr><td colspan="4" style="text-align:center;color:#999;">No grades recorded</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <style>
         .table-responsive {
             overflow-x: auto;
@@ -169,13 +237,14 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .report-table td {
             padding: 12px;
             text-align: left;
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: none;
         }
 
         .report-table th {
             background: #6a0dad;
             color: white;
             font-weight: 600;
+            border-bottom: 2px solid #5a0a9d;
         }
 
         .report-table tr:hover {
@@ -192,6 +261,187 @@ $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 padding: 8px;
             }
         }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: var(--card, #fff);
+            margin: 3% auto;
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 85vh;
+            overflow-y: auto;
+            position: relative;
+        }
+        
+        .modal-close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 20px;
+        }
+        
+        .modal-close:hover {
+            color: #000;
+        }
+        
+        .profile-card {
+            background: var(--bg-secondary, #f8f9fa);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .profile-card h3 {
+            color: var(--violet, #6a0dad);
+            margin: 0 0 15px 0;
+            font-size: 18px;
+        }
+        
+        .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .profile-item {
+            padding: 10px;
+            background: var(--card, #fff);
+            border-radius: 6px;
+        }
+        
+        .profile-item strong {
+            color: var(--text, #333);
+            display: block;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+        
+        .profile-item span {
+            color: var(--text-light, #666);
+            font-size: 15px;
+        }
+        
+        .profile-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card, #fff);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        
+        .profile-table th {
+            background: var(--violet, #6a0dad);
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .profile-table td {
+            padding: 12px;
+            color: var(--text, #333);
+        }
+        
+        .profile-table tbody tr:nth-child(even) {
+            background: var(--bg-secondary, #f8f9fa);
+        }
     </style>
+    
+    <script>
+        function viewProfile(studentId) {
+            const modal = document.getElementById('profileModal');
+            const loading = document.getElementById('profileLoading');
+            const content = document.getElementById('profileContent');
+            
+            modal.style.display = 'block';
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            
+            // Fetch student data
+            fetch('get_student_profile.php?id=' + studentId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                        closeProfileModal();
+                        return;
+                    }
+                    
+                    // Populate basic info
+                    document.getElementById('profileName').textContent = data.name;
+                    document.getElementById('pStudentId').textContent = data.student_id;
+                    document.getElementById('pEmail').textContent = data.email;
+                    document.getElementById('pProgram').textContent = data.program;
+                    document.getElementById('pYearLevel').textContent = data.year_level;
+                    document.getElementById('pStatus').textContent = data.status;
+                    document.getElementById('pEnrolled').textContent = data.created_at;
+                    
+                    // Populate courses
+                    const coursesBody = document.getElementById('pCourses');
+                    if (data.courses && data.courses.length > 0) {
+                        coursesBody.innerHTML = data.courses.map(c => `
+                            <tr>
+                                <td>${c.course_code}</td>
+                                <td>${c.course_name}</td>
+                                <td>${c.section_code || 'N/A'}</td>
+                                <td>${c.instructor || 'N/A'}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        coursesBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;">No enrolled courses</td></tr>';
+                    }
+                    
+                    // Populate grades
+                    const gradesBody = document.getElementById('pGrades');
+                    if (data.grades && data.grades.length > 0) {
+                        gradesBody.innerHTML = data.grades.map(g => `
+                            <tr>
+                                <td>${g.course_name}</td>
+                                <td>${g.grade}</td>
+                                <td>${g.remarks || '-'}</td>
+                                <td>${g.school_year || 'N/A'}</td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        gradesBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;">No grades recorded</td></tr>';
+                    }
+                    
+                    loading.style.display = 'none';
+                    content.style.display = 'block';
+                })
+                .catch(error => {
+                    alert('Error loading profile: ' + error);
+                    closeProfileModal();
+                });
+        }
+        
+        function closeProfileModal() {
+            document.getElementById('profileModal').style.display = 'none';
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('profileModal');
+            if (event.target === modal) {
+                closeProfileModal();
+            }
+        }
+    </script>
 </body>
 </html>

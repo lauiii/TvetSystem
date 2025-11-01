@@ -150,6 +150,21 @@
     background: var(--bg-secondary);
 }
 
+[data-theme="dark"] .modern-file-upload .file-upload-label {
+    background: var(--bg-secondary);
+    border-color: var(--border);
+    color: var(--text);
+}
+
+[data-theme="dark"] .modern-file-upload .file-upload-label:hover {
+    border-color: var(--violet-light);
+    background: var(--card);
+}
+
+[data-theme="dark"] .modern-file-upload .file-text {
+    color: var(--text-light);
+}
+
 [data-theme="dark"] .filter-form {
     background: var(--bg-secondary);
 }

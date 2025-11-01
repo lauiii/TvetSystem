@@ -84,6 +84,7 @@ try {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Programs - Admin</title>
+    <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
     <link rel="stylesheet" href="../assets/css/admin-style.css">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <script src="../assets/js/dark-mode.js" defer></script>
@@ -108,9 +109,6 @@ try {
                     <?php endif; ?>
                     <?php if (in_array('code', $programCols)): ?>
                         <div class="form-row"><label>Program Code (e.g. DIT)</label><br><input type="text" name="code" required placeholder="DIT"></div>
-                    <?php endif; ?>
-                    <?php if (in_array('description', $programCols)): ?>
-                        <div class="form-row"><label>Description</label><br><textarea name="description" rows="3" placeholder="Short program description..."></textarea></div>
                     <?php endif; ?>
                     <button class="btn primary">Add Program</button>
                 </form>

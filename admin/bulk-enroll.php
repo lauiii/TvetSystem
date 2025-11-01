@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Bulk Enroll - Admin</title>
+    <title>Enroll - Admin</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <script src="../assets/js/dark-mode.js" defer></script>
@@ -125,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
 
         <main class="main-content">
             <div class="container">
-                <?php $pageTitle = 'Bulk Enroll Students'; require __DIR__ . '/inc/header.php'; ?>
+                <?php $pageTitle = 'Enroll Students'; require __DIR__ . '/inc/header.php'; ?>
                 <div class="card">
                     <p>Download the template, fill in rows, then upload the CSV. The system will create student accounts, auto-enroll them into courses matching program & year, and attempt to send credentials by email.</p>
 
@@ -136,37 +136,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
                     <form method="POST" enctype="multipart/form-data">
                         <div class="form-group">
                             <label for="csv_file">CSV File</label>
-                            <div class="file-upload" onclick="document.getElementById('csv_file').click()">
-                                <p style="font-size:28px;margin-bottom:6px;">📁</p>
-                                <p class="muted">Click to select CSV file</p>
-                                <input type="file" name="csv_file" id="csv_file" accept=".csv" style="display:none">
+                            <div class="modern-file-upload">
+                                <input type="file" name="csv_file" id="csv_file" accept=".csv" onchange="updateFileName(this)">
+                                <label for="csv_file" class="file-upload-label">
+                                    <span class="file-icon">📄</span>
+                                    <span class="file-text" id="file-name">Choose CSV file</span>
+                                </label>
                             </div>
                         </div>
                         <div class="form-group">
                             <button class="btn primary">Upload and Process</button>
                         </div>
                     </form>
+                    
+                    <script>
+                    function updateFileName(input) {
+                        const fileName = input.files[0]?.name || 'Choose CSV file';
+                        document.getElementById('file-name').textContent = fileName;
+                    }
+                    </script>
 
                     <?php foreach ($enrollmentResults as $r): ?>
                         <?php if (isset($r['success'])): ?>
-                            <div class="ok"><?php echo htmlspecialchars($r['success']); ?></div>
+                            <div class="alert alert-success"><?php echo htmlspecialchars($r['success']); ?></div>
                         <?php else: ?>
-                            <div class="err"><?php echo htmlspecialchars($r['error']); ?></div>
+                            <div class="alert alert-error"><?php echo htmlspecialchars($r['error']); ?></div>
                         <?php endif; ?>
                     <?php endforeach; ?>
 
-                    <?php if ($error): ?><div class="err"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
-                    <?php if ($success): ?><div class="ok"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
+                    <?php if ($error): ?><div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
+                    <?php if ($success): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
                 </div>
 
                 <div class="card" style="margin-top:16px">
                     <h3>Manual Add Student</h3>
                     <form method="POST">
                         <input type="hidden" name="add_manual" value="1">
-                        <div class="form-group"><label>First Name</label><input type="text" name="first_name" required></div>
-                        <div class="form-group"><label>Last Name</label><input type="text" name="last_name" required></div>
-                        <div class="form-group"><label>Email</label><input type="email" name="email" required></div>
-                        <div class="form-group"><label>Program</label>
+                        <div class="form-group">
+                            <label>First Name</label>
+                            <input type="text" name="first_name" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Last Name</label>
+                            <input type="text" name="last_name" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" name="email" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Program</label>
                             <select name="program_id" required>
                                 <option value="">-- choose program --</option>
                                 <?php foreach ($programs as $p): ?>
@@ -174,7 +193,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="form-group"><label>Year Level</label><input type="number" name="year_level" min="1" value="1"></div>
+                        <div class="form-group">
+                            <label>Year Level</label>
+                            <select name="year_level" required>
+                                <option value="">-- choose year level --</option>
+                                <option value="1">1st Year</option>
+                                <option value="2">2nd Year</option>
+                                <option value="3">3rd Year</option>
+                            </select>
+                        </div>
                         <div class="form-group"><button class="btn primary">Enroll Student</button></div>
                     </form>
                 </div>
