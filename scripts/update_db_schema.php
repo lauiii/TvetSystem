@@ -226,6 +226,45 @@ try {
     try { $pdo->exec("ALTER TABLE attendance_sessions ADD UNIQUE KEY unique_section_date (section_id, session_date)"); } catch (Exception $e) { /* ignore */ }
     try { $pdo->exec("ALTER TABLE attendance_records ADD UNIQUE KEY unique_session_enrollment (session_id, enrollment_id)"); } catch (Exception $e) { /* ignore */ }
 
+    // Email outbox for queued emails
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_outbox (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        to_email VARCHAR(255) NOT NULL,
+        to_name VARCHAR(255) NULL,
+        subject VARCHAR(255) NOT NULL,
+        body_html MEDIUMTEXT NOT NULL,
+        body_text TEXT NULL,
+        attachment_name VARCHAR(255) NULL,
+        attachment_mime VARCHAR(100) NULL,
+        attachment_content LONGBLOB NULL,
+        status ENUM('pending','sent','failed') NOT NULL DEFAULT 'pending',
+        attempts INT NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        sent_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_status_scheduled (status, scheduled_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Import jobs table (background CSV processing)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS import_jobs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        job_type VARCHAR(50) NOT NULL DEFAULT 'student_import',
+        file_path VARCHAR(500) NOT NULL,
+        status ENUM('pending','running','completed','failed') NOT NULL DEFAULT 'pending',
+        total_rows INT NULL,
+        processed_rows INT NOT NULL DEFAULT 0,
+        last_line INT NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        finished_at DATETIME NULL,
+        INDEX idx_status (status),
+        INDEX idx_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     // Deduplicate existing attendance_sessions keeping lowest id per (section_id, session_date)
     try {
         $dups = $pdo->query("SELECT section_id, session_date, MIN(id) AS keep_id, GROUP_CONCAT(id ORDER BY id) AS ids, COUNT(*) AS cnt FROM attendance_sessions GROUP BY section_id, session_date HAVING cnt > 1");

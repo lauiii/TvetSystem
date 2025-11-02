@@ -5,9 +5,13 @@ requireRole('instructor');
 
 $userId = (int)$_SESSION['user_id'];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_read'])) {
-    $ids = array_map('intval', $_POST['ids'] ?? []);
-    mark_notifications_read($pdo, $userId, $ids);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['mark_all'])) {
+        mark_all_notifications_read($pdo, $userId);
+    } elseif (isset($_POST['mark_read'])) {
+        $ids = array_map('intval', $_POST['ids'] ?? []);
+        mark_notifications_read($pdo, $userId, $ids);
+    }
     header('Location: notifications.php');
     exit;
 }
@@ -51,8 +55,9 @@ $groups = list_notifications_grouped($pdo, $userId);
               <?php endforeach; ?>
             </ul>
           <?php endforeach; ?>
-          <div style="margin-top:10px;">
+          <div style="margin-top:10px; display:flex; gap:8px;">
             <button class="btn primary" name="mark_read" value="1">Mark selected as read</button>
+            <button class="btn" name="mark_all" value="1" onclick="return confirm('Mark all notifications as read?');">Mark all as read</button>
           </div>
         </form>
       </div>

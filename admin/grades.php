@@ -334,9 +334,15 @@ foreach ($studentCourseAverages as $r) {
                                                     ?>
                                                     </strong>
                                                 </td>
-                                                <td>
-                                                <button class="btn btn-violet" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">🟣 View Grades</button>
-                                                <a class="btn btn-green" href="print_grades_pdf.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank">🟢 Print Grades</a>
+                                                <td class="actions">
+                                                    <button type="button" class="btn btn-modern btn-view text-decoration-none" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">
+                                                        <span class="icon" aria-hidden="true">👁️</span>
+                                                        <span>View Grades</span>
+                                                    </button>
+                                                    <a class="btn btn-modern btn-print text-decoration-none" href="print_grades_pdf.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank" rel="noopener">
+                                                        <span class="icon" aria-hidden="true">🖨️</span>
+                                                        <span>Print Grades</span>
+                                                    </a>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -365,10 +371,18 @@ foreach ($studentCourseAverages as $r) {
     </div>
 
     <style>
-        .btn.btn-violet, .btn-violet { background-color:#9b25e7; color:#fff; border:none; border-radius:8px; padding:5px 14px; }
-        .btn.btn-violet:hover, .btn-violet:hover { background-color:#7c1bc0; }
-        .btn.btn-green, .btn-green { background-color:#28a745; color:#fff; border:none; border-radius:8px; padding:5px 14px; }
-        .btn.btn-green:hover, .btn-green:hover { background-color:#218838; }
+        /* Modernize action buttons */
+        .actions .btn { margin-right:8px; }
+        .btn-modern{ border-radius:999px; padding:6px 14px; font-weight:600; border:1px solid transparent; box-shadow:0 1px 2px rgba(16,24,40,.05); transition:transform .15s ease, box-shadow .15s ease; }
+        .btn-modern:hover{ transform:translateY(-1px); box-shadow:0 6px 12px rgba(16,24,40,.10); }
+        .btn-view{ background:#6a0dad; color:#fff; }
+        .btn-view:hover{ background:#570ea8; }
+        .btn-print{ background:#16a34a; color:#fff; }
+        .btn-print:hover{ background:#12853c; }
+        .btn .icon{ display:inline-flex; align-items:center; margin-right:8px; }
+        /* Remove underline on button links */
+        a.btn, a.btn:hover, a.btn:focus{ text-decoration:none !important; }
+
         .grades-table thead th { background:#9b25e7; color:#fff; }
         .grades-table, .grades-table th, .grades-table td { border-collapse:collapse; border:1px solid #e5e7eb; }
         .text-success { color:#28a745; }

@@ -187,6 +187,17 @@ function ensure_unique_enrollments_schema(PDO $pdo): void {
     try {
         $cols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN);
         $hasSy = in_array('school_year_id', $cols, true);
+        $hasSection = in_array('section_id', $cols, true);
+
+        // Add section_id column if missing (nullable)
+        if (!$hasSection) {
+            try {
+                $pdo->exec("ALTER TABLE enrollments ADD COLUMN section_id INT NULL AFTER school_year_id");
+            } catch (Exception $e) { /* ignore if fails */ }
+            try { $pdo->exec("ALTER TABLE enrollments ADD INDEX idx_enr_section (section_id)"); } catch (Exception $e) { /* ignore */ }
+            $hasSection = true; // best-effort
+        }
+
         // Deduplicate: keep lowest id
         if ($hasSy) {
             $pdo->exec("DELETE e1 FROM enrollments e1 JOIN enrollments e2 ON e1.student_id=e2.student_id AND e1.course_id=e2.course_id AND e1.school_year_id=e2.school_year_id AND e1.id>e2.id");
@@ -272,25 +283,50 @@ function enroll_student_in_section(PDO $pdo, $user_id, $course_id, $school_year_
 
     if (!$section) {
         // No available sections, enroll directly in course (legacy support) – avoid duplicates via WHERE NOT EXISTS
-        $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
-                              SELECT ?, ?, ?, 'enrolled' FROM DUAL
-                              WHERE NOT EXISTS (
-                                  SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
-                              )");
-        $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
+        // Include section_id if column exists
+        $cols = [];
+        try { $cols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $cols = []; }
+        $hasSecCol = in_array('section_id', $cols, true);
+        if ($hasSecCol) {
+            $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, section_id, status)
+                                  SELECT ?, ?, ?, NULL, 'enrolled' FROM DUAL
+                                  WHERE NOT EXISTS (
+                                      SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                                  )");
+            $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
+        } else {
+            $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
+                                  SELECT ?, ?, ?, 'enrolled' FROM DUAL
+                                  WHERE NOT EXISTS (
+                                      SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                                  )");
+            $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
+        }
         return $ins->rowCount() > 0;
     }
 
     // Enroll in section and update count
     $pdo->beginTransaction();
     try {
-        // Conditional insert to avoid duplicates
-        $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
-                              SELECT ?, ?, ?, 'enrolled' FROM DUAL
-                              WHERE NOT EXISTS (
-                                  SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
-                              )");
-        $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
+        // Conditional insert to avoid duplicates (include section_id if available)
+        $cols = [];
+        try { $cols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $cols = []; }
+        $hasSecCol = in_array('section_id', $cols, true);
+        if ($hasSecCol) {
+            $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, section_id, status)
+                                  SELECT ?, ?, ?, ?, 'enrolled' FROM DUAL
+                                  WHERE NOT EXISTS (
+                                      SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                                  )");
+            $ins->execute([$user_id, $course_id, $school_year_id, $section['id'], $user_id, $course_id, $school_year_id]);
+        } else {
+            $ins = $pdo->prepare("INSERT INTO enrollments (student_id, course_id, school_year_id, status)
+                                  SELECT ?, ?, ?, 'enrolled' FROM DUAL
+                                  WHERE NOT EXISTS (
+                                      SELECT 1 FROM enrollments WHERE student_id=? AND course_id=? AND (school_year_id IS NULL OR school_year_id=?)
+                                  )");
+            $ins->execute([$user_id, $course_id, $school_year_id, $user_id, $course_id, $school_year_id]);
+        }
 
         if ($ins->rowCount() > 0) {
             // Update section enrolled count only when we actually inserted
@@ -305,7 +341,6 @@ function enroll_student_in_section(PDO $pdo, $user_id, $course_id, $school_year_
         return false;
     }
 }
-
 /**
  * Helper: get program id by name or code
  */
@@ -388,30 +423,31 @@ function get_attendance_weights(PDO $pdo, int $section_id): array {
  */
 function lee_from_percent(?float $percent) {
     if ($percent === null) return null;
-    $p = floatval($percent);
-    if ($p >= 95) return 1.0;
-    if ($p == 94) return 1.1;
-    if ($p == 93) return 1.2;
-    if ($p == 92) return 1.3;
-    if ($p == 91) return 1.4;
-    if ($p == 90) return 1.5;
-    if ($p == 89) return 1.6;
-    if ($p == 88) return 1.7;
-    if ($p == 87) return 1.8;
-    if ($p == 86) return 1.9;
-    if ($p == 85) return 2.0;
-    if ($p == 84) return 2.1;
-    if ($p == 83) return 2.2;
-    if ($p == 82) return 2.3;
-    if ($p == 81) return 2.4;
-    if ($p == 80) return 2.5;
-    if ($p == 79) return 2.6;
-    if ($p == 78) return 2.7;
-    if ($p == 77) return 2.8;
-    if ($p == 76) return 2.9;
-    if ($p == 75) return 3.0;
-    if ($p < 75) return 5.0; // Failed
-    return 1.0; // default for >100 guard (treat as top)
+    // Align with client-side logic: round to nearest whole percent before mapping
+    $x = (int)round(max(0.0, min(100.0, (float)$percent)));
+    if ($x >= 95) return 1.00;
+    if ($x === 94) return 1.10;
+    if ($x === 93) return 1.20;
+    if ($x === 92) return 1.30;
+    if ($x === 91) return 1.40;
+    if ($x === 90) return 1.50;
+    if ($x === 89) return 1.60;
+    if ($x === 88) return 1.70;
+    if ($x === 87) return 1.80;
+    if ($x === 86) return 1.90;
+    if ($x === 85) return 2.00;
+    if ($x === 84) return 2.10;
+    if ($x === 83) return 2.20;
+    if ($x === 82) return 2.30;
+    if ($x === 81) return 2.40;
+    if ($x === 80) return 2.50;
+    if ($x === 79) return 2.60;
+    if ($x === 78) return 2.70;
+    if ($x === 77) return 2.80;
+    if ($x === 76) return 2.90;
+    if ($x === 75) return 3.00;
+    if ($x < 75) return 5.00; // Failed
+    return 1.00; // Fallback (shouldn't hit)
 }
 
 function lee_remarks(?float $leeAverage) {
@@ -604,6 +640,13 @@ function mark_notifications_read(PDO $pdo, int $userId, array $ids): int {
     $params = $ids; array_unshift($params, $userId);
     $st = $pdo->prepare("UPDATE notifications SET status='read' WHERE user_id = ? AND id IN ($place)");
     $st->execute($params);
+    return $st->rowCount();
+}
+
+/** Mark ALL unread notifications read for a user */
+function mark_all_notifications_read(PDO $pdo, int $userId): int {
+    $st = $pdo->prepare("UPDATE notifications SET status='read' WHERE user_id = ? AND status='unread'");
+    $st->execute([$userId]);
     return $st->rowCount();
 }
 

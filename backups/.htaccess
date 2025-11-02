@@ -1,0 +1,4 @@
+# Deny all access to backup files from web
+# Only allow admin users to download via PHP script
+Order Deny,Allow
+Deny from all

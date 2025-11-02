@@ -1,0 +1,155 @@
+erDiagram
+  users {
+    INT id PK
+    VARCHAR student_id
+    VARCHAR first_name
+    VARCHAR last_name
+    VARCHAR email
+    VARCHAR password
+    ENUM role "admin|instructor|student"
+    INT program_id "nullable"
+    INT year_level "nullable"
+    ENUM status "active|inactive"
+    TIMESTAMP created_at
+  }
+  programs {
+    INT id PK
+    VARCHAR name
+    VARCHAR code "UNIQUE"
+    TEXT description
+    TIMESTAMP created_at
+  }
+  school_years {
+    INT id PK
+    VARCHAR year "UNIQUE"
+    ENUM status "active|inactive"
+    TIMESTAMP created_at
+  }
+  courses {
+    INT id PK
+    INT program_id FK
+    VARCHAR course_code
+    VARCHAR course_name
+    INT year_level
+    INT semester
+    INT school_year_id FK
+    INT instructor_id "nullable, no FK"
+    TIMESTAMP created_at
+  }
+  rooms {
+    INT id PK
+    VARCHAR room_code "UNIQUE"
+    VARCHAR room_name
+    INT capacity
+    VARCHAR building
+    INT floor
+    ENUM status "active|inactive"
+    TIMESTAMP created_at
+  }
+  sections {
+    INT id PK
+    INT course_id FK
+    VARCHAR section_code
+    VARCHAR section_name
+    INT room_id "nullable FK"
+    INT capacity
+    INT enrolled_count
+    ENUM status "active|inactive"
+    TIMESTAMP created_at
+  }
+  instructor_sections {
+    INT id PK
+    INT instructor_id FK
+    INT section_id FK
+    ENUM role "primary|secondary"
+    TIMESTAMP assigned_at
+  }
+  enrollments {
+    INT id PK
+    INT student_id FK
+    INT course_id FK
+    INT school_year_id FK
+    ENUM status "enrolled|dropped|completed"
+    TIMESTAMP created_at
+  }
+  assessment_criteria {
+    INT id PK
+    INT course_id FK
+    VARCHAR name
+    ENUM period "prelim|midterm|finals"
+    DECIMAL percentage
+    TIMESTAMP created_at
+  }
+  assessment_items {
+    INT id PK
+    INT criteria_id FK
+    VARCHAR name
+    DECIMAL total_score
+    TIMESTAMP created_at
+  }
+  grades {
+    INT id PK
+    INT enrollment_id FK
+    INT assessment_id FK
+    DECIMAL grade
+    ENUM status "complete|incomplete|missing"
+    TEXT remarks
+    TIMESTAMP submitted_at
+    TIMESTAMP created_at
+  }
+  notifications {
+    INT id PK
+    INT user_id FK
+    TEXT message
+    ENUM type "info|warning|alert|success"
+    ENUM status "unread|read"
+    TIMESTAMP created_at
+  }
+  flags {
+    INT id PK
+    INT student_id FK
+    INT course_id FK
+    VARCHAR issue
+    TEXT description
+    ENUM status "pending|resolved"
+    INT flagged_by
+    TIMESTAMP created_at
+  }
+  attendance_sessions {
+    INT id PK
+    INT section_id FK
+    DATE session_date
+    DATETIME started_at
+    ENUM status "open|closed"
+    TEXT notes
+  }
+  attendance_records {
+    INT id PK
+    INT session_id FK
+    INT enrollment_id FK
+    ENUM status "present|absent|late|excused"
+    VARCHAR notes
+    DATETIME marked_at
+  }
+
+  programs ||--o{ users : "program_id (optional)"
+  programs ||--o{ courses : "program_id"
+  school_years ||--o{ courses : "school_year_id"
+  courses ||--o{ sections : "course_id"
+  rooms ||--o{ sections : "room_id (nullable)"
+  users ||--o{ instructor_sections : "instructor_id"
+  sections ||--o{ instructor_sections : "section_id"
+  users ||--o{ enrollments : "student_id"
+  courses ||--o{ enrollments : "course_id"
+  school_years ||--o{ enrollments : "school_year_id"
+  courses ||--o{ assessment_criteria : "course_id"
+  assessment_criteria ||--o{ assessment_items : "criteria_id"
+  enrollments ||--o{ grades : "enrollment_id"
+  assessment_items ||--o{ grades : "assessment_id"
+  sections ||--o{ attendance_sessions : "section_id"
+  attendance_sessions ||--o{ attendance_records : "session_id"
+  enrollments ||--o{ attendance_records : "enrollment_id"
+  users ||--o{ notifications : "user_id"
+  users ||--o{ flags : "student_id"
+  courses ||--o{ flags : "course_id"
+  users ||--o{ courses : "instructor_id (nullable, no FK)"

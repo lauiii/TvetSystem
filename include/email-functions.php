@@ -34,20 +34,34 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
 
     function configureSMTP(PHPMailer $mail) {
         $mail->isSMTP();
-        $mail->Host = SMTP_HOST;
+        // Optional: force IPv4 to avoid IPv6 DNS/connectivity issues on some Windows/XAMPP setups
+        $forceIPv4 = getenv('SMTP_FORCE_IPV4');
+        $host = SMTP_HOST;
+        if ($forceIPv4 !== false && (int)$forceIPv4 === 1) {
+            $host = gethostbyname($host);
+        }
+        $mail->Host = $host;
         $mail->SMTPAuth = true;
         $mail->Username = SMTP_USER;
         $mail->Password = SMTP_PASS;
         $secure = strtolower(SMTP_SECURE);
         if ($secure === 'ssl' || $secure === 'smtps') {
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-            if (empty(SMTP_PORT)) $mail->Port = 465; else $mail->Port = SMTP_PORT;
+            $mail->Port = SMTP_PORT ?: 465;
         } else {
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
             $mail->Port = SMTP_PORT ?: 587;
         }
+        $mail->SMTPAutoTLS = true;
         $mail->SMTPDebug = SMTP_DEBUG; // 0-4
         $mail->CharSet = 'UTF-8';
+        // Shorter timeouts so failures don't hang the request
+        $mail->Timeout = (int)(getenv('SMTP_TIMEOUT') ?: 20);
+        $timelimit = getenv('SMTP_TIMELIMIT');
+        if ($timelimit !== false) {
+            $mail->Timelimit = (int)$timelimit;
+        }
+        $mail->SMTPKeepAlive = false;
         // Optional: relax peer verification if needed (set SMTP_VERIFY_PEER=0)
         $verifyPeer = getenv('SMTP_VERIFY_PEER');
         if ($verifyPeer !== false && (int)$verifyPeer === 0) {
@@ -59,6 +73,43 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
                 ],
             ];
         }
+    }
+
+    // Queue support
+    function shouldQueueEmails(): bool {
+        $mode = getenv('EMAIL_MODE');
+        return $mode !== false && strtolower($mode) === 'queue';
+    }
+
+    function ensureOutboxSchema(PDO $pdo): void {
+        try {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS email_outbox (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                to_email VARCHAR(255) NOT NULL,
+                to_name VARCHAR(255) NULL,
+                subject VARCHAR(255) NOT NULL,
+                body_html MEDIUMTEXT NOT NULL,
+                body_text TEXT NULL,
+                attachment_name VARCHAR(255) NULL,
+                attachment_mime VARCHAR(100) NULL,
+                attachment_content LONGBLOB NULL,
+                status ENUM('pending','sent','failed') NOT NULL DEFAULT 'pending',
+                attempts INT NOT NULL DEFAULT 0,
+                last_error TEXT NULL,
+                scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_status_scheduled (status, scheduled_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } catch (Exception $e) { /* ignore */ }
+    }
+
+    function enqueueEmail(PDO $pdo, string $toEmail, string $toName, string $subject, string $html, string $text = '', ?string $attName = null, ?string $attContent = null, ?string $attMime = null): bool {
+        ensureOutboxSchema($pdo);
+        $sql = "INSERT INTO email_outbox (to_email, to_name, subject, body_html, body_text, attachment_name, attachment_mime, attachment_content, status) VALUES (?,?,?,?,?,?,?,?, 'pending')";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([$toEmail, $toName, $subject, $html, $text, $attName, $attMime, $attContent]);
     }
 
     /**
@@ -92,6 +143,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
                 "Student ID: $studentID\nEmail: $email\nPassword: $password\n\n" .
                 "Please log in at: " . SITE_URL . "/login.php";
 
+            if (shouldQueueEmails()) {
+                return enqueueEmail($GLOBALS['pdo'], $email, $firstName, $mail->Subject, $mail->Body, $mail->AltBody);
+            }
             $mail->send();
             return true;
         } catch (Exception $e) {
@@ -120,6 +174,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             $mail->Subject = $subject;
             $mail->Body = renderEmailTemplate($subject, $body);
             $mail->AltBody = strip_tags($body);
+            if (shouldQueueEmails()) {
+                return enqueueEmail($GLOBALS['pdo'], $email, $name, $mail->Subject, $mail->Body, $mail->AltBody);
+            }
             $mail->send();
             return true;
         } catch (Exception $e) {
@@ -179,6 +236,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             $mail->Body = renderEmailTemplate($subject, $message);
             $mail->AltBody = strip_tags($message);
 
+            if (shouldQueueEmails()) {
+                return enqueueEmail($GLOBALS['pdo'], $email, $firstName, $mail->Subject, $mail->Body, $mail->AltBody);
+            }
             $mail->send();
             return true;
         } catch (Exception $e) {
@@ -215,6 +275,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             if (!empty($attachmentContent)) {
                 $mail->addStringAttachment($attachmentContent, $attachmentName, 'base64', $mime);
             }
+            if (shouldQueueEmails()) {
+                return enqueueEmail($GLOBALS['pdo'], $to, 'Administrator', $mail->Subject, $mail->Body, $mail->AltBody, $attachmentName, $attachmentContent, $mime);
+            }
             $mail->send();
             return true;
         } catch (Exception $e) {
@@ -242,6 +305,10 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
 
             if (!empty($attachmentContent)) {
                 $mail->addStringAttachment($attachmentContent, $attachmentName, 'base64', $mime);
+            }
+
+            if (shouldQueueEmails()) {
+                return enqueueEmail($GLOBALS['pdo'], $email, $firstName, $mail->Subject, $mail->Body, $mail->AltBody, $attachmentName, $attachmentContent, $mime);
             }
 
             $mail->send();

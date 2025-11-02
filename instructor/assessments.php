@@ -120,11 +120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $name = sanitize($_POST['item_name'] ?? '');
     $total_score = floatval($_POST['total_score'] ?? 0);
 
-    // Verify criteria belongs to instructor's course
-    $criteriaCheck = $pdo->prepare("
+    // Verify criteria belongs to a section taught by this instructor
+    $criteriaCheck = $pdo->prepare("        
         SELECT ac.id FROM assessment_criteria ac
-        INNER JOIN courses c ON ac.course_id = c.id
-        WHERE ac.id = ? AND c.instructor_id = ?
+        INNER JOIN instructor_sections ins ON ac.section_id = ins.section_id
+        WHERE ac.id = ? AND ins.instructor_id = ?
     ");
     $criteriaCheck->execute([$criteria_id, $instructorId]);
     if (!$criteriaCheck->fetch()) {

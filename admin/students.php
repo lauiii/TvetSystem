@@ -8,6 +8,7 @@ requireRole('admin');
 
 // basic search
 $q = trim($_GET['q'] ?? '');
+$ql = strtolower($q);
 
 // school years for filtering
 $schoolYears = $pdo->query("SELECT id, year, status FROM school_years ORDER BY year DESC")->fetchAll(PDO::FETCH_ASSOC);
@@ -48,18 +49,53 @@ LEFT JOIN enrollments e ON e.student_id = u.id AND e.school_year_id = :syid
 WHERE u.role = 'student'";
 
 $params = [':syid' => $syId];
+$enrollApplied = false;
 if ($q !== '') {
-    // Build filter conditions depending on which columns exist
+    // Detect school-year keywords inside the query (do not affect other searches)
+    $isNonActiveSY = preg_match('/\b(non[-\s]?active|not\s+enrolled|unenrolled|not\s+active)\b/', $ql);
+    $isActiveSY = !$isNonActiveSY && preg_match('/\bactive\b/', $ql) && !preg_match('/\b(inactive|non[-\s]?active|not\s+active)\b/', $ql);
+
+    // Remove those SY keywords from the LIKE query text
+    $qForLike = trim(preg_replace([
+        '/\bnon[-\s]?active\b/','/\bnot\s+active\b/','/\binactive\b/','/\bnot\s+enrolled\b/','/\bunenrolled\b/','/\bactive\b/'],
+        ['', '', '', '', '', ''], $ql));
+
     $whereParts = [];
-    if (in_array('student_id', $userCols)) $whereParts[] = "u.student_id LIKE :q";
-    if (in_array('email', $userCols)) $whereParts[] = "u.email LIKE :q";
-    if (in_array('first_name', $userCols)) $whereParts[] = "u.first_name LIKE :q";
-    if (in_array('last_name', $userCols)) $whereParts[] = "u.last_name LIKE :q";
-    if (in_array('name', $userCols)) $whereParts[] = "u.name LIKE :q";
+    if ($qForLike !== '') {
+        if (in_array('student_id', $userCols)) $whereParts[] = "u.student_id LIKE :q";
+        if (in_array('email', $userCols)) $whereParts[] = "u.email LIKE :q";
+        if (in_array('first_name', $userCols)) $whereParts[] = "u.first_name LIKE :q";
+        if (in_array('last_name', $userCols)) $whereParts[] = "u.last_name LIKE :q";
+        if (in_array('name', $userCols)) $whereParts[] = "u.name LIKE :q";
+    }
+
+    // Optional explicit account-status filter using status:active or status:inactive
+    if (in_array('status', $userCols) && strpos($qForLike, 'status:') === 0) {
+        $explicit = trim(substr($qForLike, 7));
+        if ($explicit !== '') {
+            $whereParts[] = "u.status LIKE :status_like";
+            $params[':status_like'] = "%$explicit%";
+        }
+    }
+
     if (!empty($whereParts)) {
         $sql .= ' AND (' . implode(' OR ', $whereParts) . ')';
-        $params[':q'] = "%$q%";
+        $params[':q'] = '%' . str_replace('%','\%',$qForLike) . '%';
     }
+
+    // Apply school-year enrollment filter if keyword present
+    if ($isNonActiveSY) {
+        $sql .= ' AND e.id IS NULL';
+        $enrollApplied = true;
+    } elseif ($isActiveSY) {
+        $sql .= ' AND e.id IS NOT NULL';
+        $enrollApplied = true;
+    }
+}
+
+// Default behavior: list students enrolled in the selected school year
+if (!$enrollApplied) {
+    $sql .= ' AND e.id IS NOT NULL';
 }
 
 $sql .= " GROUP BY u.id ORDER BY u.id DESC LIMIT 200";
@@ -114,6 +150,7 @@ if (isset($_GET['ajax'])) {
         </div>
     </form>
     <a class="btn" href="resend_passwords.php" style="text-decoration:none;">Resend Passwords</a>
+    <a class="btn" href="../scripts/add_sample_students.php" style="text-decoration:none; background:#6a0dad; color:#fff;">Add Sample Students</a>
 </div>
 
                     <div class="table-responsive">
@@ -189,7 +226,7 @@ if (isset($_GET['ajax'])) {
             <td>${escapeHtml(email)}</td>
             <td>${escapeHtml(program)}</td>
             <td>${escapeHtml(String(year))}</td>
-            <td><button class="btn btn-sm" style="padding:6px 12px;font-size:13px;" onclick="viewProfile(${s.id})">View Profile</button></td>
+            <td><button class=\"btn btn-sm\" style=\"padding:6px 12px;font-size:13px;\" onclick=\"viewProfile(${s.id})\">View Profile</button></td>
           `;
           tbody.appendChild(tr);
         });

@@ -76,12 +76,12 @@ $form_rem = isset($_POST['remind_days']) ? trim($_POST['remind_days']) : '7,3,1'
             <div class="form-group">
               <label>Audience *</label>
               <div class="chips" id="audienceChips">
-                <label class="chip" data-value="instructor">
-                  <input type="radio" name="audience" value="instructor" <?php echo $form_audience==='instructor'?'checked':''; ?> style="display:none;">
+                <label class="chip" data-value="instructor" role="button" tabindex="0" aria-pressed="<?php echo $form_audience==='instructor'?'true':'false'; ?>">
+                  <input type="radio" name="audience" value="instructor" <?php echo $form_audience==='instructor'?'checked':''; ?>>
                   Instructors
                 </label>
-                <label class="chip" data-value="student">
-                  <input type="radio" name="audience" value="student" <?php echo $form_audience==='student'?'checked':''; ?> style="display:none;">
+                <label class="chip" data-value="student" role="button" tabindex="0" aria-pressed="<?php echo $form_audience==='student'?'true':'false'; ?>">
+                  <input type="radio" name="audience" value="student" <?php echo $form_audience==='student'?'checked':''; ?>>
                   Students
                 </label>
               </div>
@@ -153,14 +153,22 @@ $form_rem = isset($_POST['remind_days']) ? trim($_POST['remind_days']) : '7,3,1'
   function refreshAudienceUI(){
     chips.forEach(ch => {
       const input = ch.querySelector('input[type="radio"]');
-      if(input && input.checked){ ch.style.background = '#f0ebff'; ch.style.borderColor = '#e3d9ff'; }
-      else { ch.style.background = ''; ch.style.borderColor = ''; }
+      if(input && input.checked){ ch.classList.add('selected'); ch.setAttribute('aria-pressed','true'); }
+      else { ch.classList.remove('selected'); ch.setAttribute('aria-pressed','false'); }
     });
   }
-  chips.forEach(ch => ch.addEventListener('click', () => {
+  function selectChip(ch){
     const input = ch.querySelector('input[type="radio"]');
-    if(input){ input.checked = true; refreshAudienceUI(); }
-  }));
+    if(!input) return;
+    input.checked = true;
+    // also uncheck others explicitly for robustness
+    chips.forEach(other => { if (other!==ch){ const i=other.querySelector('input[type="radio"]'); if(i) i.checked=false; } });
+    refreshAudienceUI();
+  }
+  chips.forEach(ch => {
+    ch.addEventListener('click', () => selectChip(ch));
+    ch.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); selectChip(ch); } });
+  });
   refreshAudienceUI();
 
   // Remind days chips preview + normalization
