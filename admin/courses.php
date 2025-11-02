@@ -949,6 +949,40 @@ $semesterOrdinals = ['1st', '2nd', 'Summer'];
             </div>
         </main>
     </div>
+     <!-- Import Courses -->
+    <!-- <div class="card import-card" style="max-width: 100%; margin: 20px auto; border-radius: 12px;">
+        <h3 style="margin-bottom:6px;">Import Courses</h3>
+        <div class="chips" style="margin-bottom:10px; justify-content:center;">
+            <span class="chip" title="Program short code">program_code</span>
+            <span class="chip">course_code</span>
+            <span class="chip">course_name</span>
+            <span class="chip">units</span>
+            <span class="chip">year_level</span>
+            <span class="chip">semester</span>
+            <a class="template-link" href="../assets/templates/courses_import_template.csv" download>Template (CSV)</a>
+            <a class="template-link" href="download_courses_template_excel.php">Template (Excel)</a>
+        </div>
+        <form id="importForm" method="POST" enctype="multipart/form-data" class="import-form" style="display:flex; flex-direction:column; align-items:center; gap:12px;">
+            <input type="hidden" name="action" value="import">
+            <div class="modern-file-upload" style="max-width:520px; margin:0 auto;">
+                <input id="importFile" type="file" name="csv_file" accept=".csv,.xlsx,.xls" required>
+                <label for="importFile" id="fileDrop" class="file-upload-label" title="Drop a .csv/.xlsx file here or click to browse">
+                    <span class="file-icon">📁</span>
+                    <span class="file-text">
+                        <strong>Choose file</strong>
+                        <small id="fileName" class="muted" style="display:block;">.csv, .xlsx, .xls</small>
+                    </span>
+                </label>
+            </div>
+            <div style="display:flex; gap:12px; align-items:center; justify-content:center; margin-top:12px; flex-wrap:wrap;">
+                <button id=\"importBtn\" type=\"submit\" class=\"btn primary\">Import</button>
+                <div id="importProgress" class="progress-indeterminate" style="display:none; width:220px;"><span class="ind-bar"></span></div>
+            </div>
+        </form>
+        <div class="small" style="margin-top:10px; color:#444;">
+            Tip: Keep headers exact. Units/year/semester should be numbers.
+        </div>
+    </div> -->
 
     <!-- Edit Modal -->
     <div id="editModal" class="modal" style="display:none;">

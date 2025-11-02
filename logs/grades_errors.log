@@ -522,3 +522,5 @@ Payload: {"376":{"110":{"grade":""}},"377":{"110":{"grade":""}},"null":[]}
 2025-11-02T17:19:11+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
 2025-11-02T17:24:32+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
 2025-11-02T17:24:40+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
+2025-11-02T22:20:20+01:00 | [manage-grades] section_id=876, course_id=136, assessments=0, displayAssessments=0
+2025-11-02T22:20:38+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
