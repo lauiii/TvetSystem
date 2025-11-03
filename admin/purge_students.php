@@ -13,6 +13,13 @@ $stats = [
     'password_resets' => 0,
 ];
 
+// Determine users email column dynamically
+$emailCol = 'email';
+try {
+    $cols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN, 0);
+    foreach (['email','user_email','username'] as $c) { if (in_array($c, $cols, true)) { $emailCol = $c; break; } }
+} catch (Exception $e) { /* ignore, default to 'email' */ }
+
 try {
     // Count students
     $stats['students'] = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role='student'")->fetchColumn();
@@ -20,8 +27,12 @@ try {
     $stats['enrollments'] = (int)$pdo->query("SELECT COUNT(*) FROM enrollments e INNER JOIN users u ON e.student_id=u.id WHERE u.role='student'")->fetchColumn();
     // Count grades tied to those enrollments
     $stats['grades'] = (int)$pdo->query("SELECT COUNT(*) FROM grades g INNER JOIN enrollments e ON g.enrollment_id=e.id INNER JOIN users u ON e.student_id=u.id WHERE u.role='student'")->fetchColumn();
-    // Count password_resets for student emails
-    $stats['password_resets'] = (int)$pdo->query("SELECT COUNT(*) FROM password_resets pr INNER JOIN users u ON pr.email=u.email WHERE u.role='student'")->fetchColumn();
+    // Count password_resets for student emails (adaptive column)
+    try {
+        $stats['password_resets'] = (int)$pdo->query("SELECT COUNT(*) FROM password_resets pr INNER JOIN users u ON pr.email = u.`$emailCol` WHERE u.role='student'")->fetchColumn();
+    } catch (Exception $e) {
+        $stats['password_resets'] = 0; // table may not exist
+    }
 } catch (Exception $e) {
     // ignore
 }
@@ -34,8 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm']) && $_POST[
         $pdo->exec("DELETE g FROM grades g INNER JOIN enrollments e ON g.enrollment_id = e.id INNER JOIN users u ON e.student_id = u.id WHERE u.role='student'");
         // Delete enrollments for students
         $pdo->exec("DELETE e FROM enrollments e INNER JOIN users u ON e.student_id = u.id WHERE u.role='student'");
-        // Delete password resets for student emails
-        try { $pdo->exec("DELETE pr FROM password_resets pr INNER JOIN users u ON pr.email=u.email WHERE u.role='student'"); } catch (Exception $e) { /* table may not exist */ }
+        // Delete password resets for student emails (adaptive column)
+        try { $pdo->exec("DELETE pr FROM password_resets pr INNER JOIN users u ON pr.email = u.`$emailCol` WHERE u.role='student'"); } catch (Exception $e) { /* table may not exist */ }
+        // Delete queued/sent emails for student recipients
+        try { $pdo->exec("DELETE eo FROM email_outbox eo INNER JOIN users u ON eo.to_email = u.`$emailCol` WHERE u.role='student'"); } catch (Exception $e) { /* table may not exist */ }
+        // Fallback: also remove all credential emails by subject (covers orphaned rows)
+        try { $pdo->exec("DELETE FROM email_outbox WHERE subject='Your College Grading System Account'"); } catch (Exception $e) { /* ignore if table missing */ }
         // Finally delete users (students)
         $pdo->exec("DELETE FROM users WHERE role='student'");
         $pdo->commit();

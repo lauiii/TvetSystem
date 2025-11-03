@@ -38,7 +38,7 @@ function ensure_import_jobs_table(PDO $pdo): void {
 // Fetch programs for manual add form
 $programs = $pdo->query('SELECT id, name FROM programs ORDER BY name')->fetchAll();
 
-// CSV processing (now queues a background job)
+// CSV processing (process immediately, send emails directly)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
     if (!isset($_FILES['csv_file']) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK) {
         $errors[] = 'Please upload a valid CSV file.';
@@ -51,25 +51,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         if (!move_uploaded_file($tmp, $destPath)) {
             $error = 'Failed to move uploaded file.';
         } else {
-            // Count rows (optional, best-effort)
-            $total = null;
-            if (($h = fopen($destPath, 'r')) !== false) {
-                $cnt = 0; while (($r = fgetcsv($h, 1000, ',')) !== false) { $cnt++; }
-                fclose($h);
-                $total = max(0, $cnt - 1); // minus header
+            @set_time_limit(0);
+            $prevEmailMode = getenv('EMAIL_MODE');
+            putenv('EMAIL_MODE=queue'); // enqueue emails for later sending during import
+            $fh = fopen($destPath, 'r');
+            if ($fh === false) {
+                $error = 'Unable to open the uploaded CSV.';
+                // restore EMAIL_MODE
+                if ($prevEmailMode === false) { putenv('EMAIL_MODE'); } else { putenv('EMAIL_MODE=' . $prevEmailMode); }
+            } else {
+                $line = 0;
+                $created = 0;
+                $skipped = 0;
+                $failed = 0;
+                $errShown = 0; $errLimit = 10; $errorsHidden = 0;
+                $headerSkipped = false;
+                while (($row = fgetcsv($fh, 1000, ',')) !== false) {
+                    $line++;
+                    if (!$headerSkipped) { $headerSkipped = true; continue; }
+                    $cols = array_map('trim', $row);
+                    if (count($cols) < 5) { $skipped++; continue; }
+                    list($firstName, $lastName, $email, $programInput, $yearLevel) = $cols;
+                    if ($firstName === '' || $lastName === '' || $email === '' || $programInput === '' || $yearLevel === '') { $skipped++; continue; }
+                    $programId = find_program_id($pdo, $programInput);
+                    if (!$programId) { $skipped++; continue; }
+                    try {
+                        $res = create_user($pdo, $firstName, $lastName, $email, (int)$programId, (int)$yearLevel, 'student');
+                        if (!empty($res['success'])) {
+                            $created++;
+                            // Do not add per-row success to keep UI minimal
+                        } else {
+                            $failed++;
+                            if ($errShown < $errLimit) { $enrollmentResults[] = ['error' => 'Line ' . $line . ': ' . ($res['error'] ?? 'Failed to create user')]; $errShown++; }
+                            else { $errorsHidden++; }
+                        }
+                    } catch (Exception $e) {
+                        $failed++;
+                        if ($errShown < $errLimit) { $enrollmentResults[] = ['error' => 'Line ' . $line . ': ' . $e->getMessage()]; $errShown++; }
+                        else { $errorsHidden++; }
+                    }
+                }
+                fclose($fh);
+                if ($errorsHidden > 0) { $enrollmentResults[] = ['error' => "... and {$errorsHidden} more errors not shown."]; }
+                $success = "Import finished. Created: {$created}, Skipped: {$skipped}, Failed: {$failed}.";
+                // restore EMAIL_MODE
+                if ($prevEmailMode === false) { putenv('EMAIL_MODE'); } else { putenv('EMAIL_MODE=' . $prevEmailMode); }
             }
-            ensure_import_jobs_table($pdo);
-            try {
-                $stmt = $pdo->prepare("INSERT INTO import_jobs (job_type, file_path, status, total_rows) VALUES ('student_import', ?, 'pending', ?)");
-                $stmt->execute([$destPath, $total]);
-            } catch (PDOException $ex) {
-                // If table was missing and creation was delayed, try once more
-                ensure_import_jobs_table($pdo);
-                $stmt = $pdo->prepare("INSERT INTO import_jobs (job_type, file_path, status, total_rows) VALUES ('student_import', ?, 'pending', ?)");
-                $stmt->execute([$destPath, $total]);
-            }
-            $jobId = $pdo->lastInsertId();
-            $success = "Import queued as Job #{$jobId}. You can leave this page; processing will continue in the background.";
         }
     }
 }
@@ -153,13 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
                     }
                     </script>
 
-                    <?php foreach ($enrollmentResults as $r): ?>
-                        <?php if (isset($r['success'])): ?>
-                            <div class="alert alert-success"><?php echo htmlspecialchars($r['success']); ?></div>
-                        <?php else: ?>
-                            <div class="alert alert-error"><?php echo htmlspecialchars($r['error']); ?></div>
-                        <?php endif; ?>
-                    <?php endforeach; ?>
+                    
 
                     <?php if ($error): ?><div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
                     <?php if ($success): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
@@ -220,12 +241,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
                         </select>
                         <label>Search</label>
                         <input type="text" id="eq-search" placeholder="email or error..." style="min-width:220px">
-                        <button class="btn" id="eq-refresh">Refresh</button>
-                        <button class="btn" id="eq-send">Send Next 10</button>
-                        <label style="display:flex;gap:6px;align-items:center;">
+                        <button class="btn" id="eq-refresh" style="display:none">Refresh</button>
+                        <button class="btn danger" id="eq-purge" style="display:none">Purge Credential Emails</button>
+                        <button class="btn" id="eq-send" style="display:none">Send Next 10</button>
+                        <button class="btn danger" id="eq-sendall">Send All (Heavy)</button>
+                        <label style="display:none;gap:6px;align-items:center;">
                             <input type="checkbox" id="eq-auto"> Auto-send
                         </label>
-                        <button class="btn primary" id="eq-prioritize" disabled>Prioritize Selected</button>
+                        <button class="btn" id="eq-sendselected">Send Selected Now</button>
+                        <button class="btn primary" id="eq-prioritize" style="display:none" disabled>Prioritize Selected</button>
                         <span id="eq-counts" style="margin-left:auto;font-size:12px;color:#555"></span>
                     </div>
                     <div class="table-responsive">
@@ -260,6 +284,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
   const countsEl = document.getElementById('eq-counts');
   const searchInput = document.getElementById('eq-search');
   const sendBtn = document.getElementById('eq-send');
+  const purgeBtn = document.getElementById('eq-purge');
+  const sendAllBtn = document.getElementById('eq-sendall');
+  const sendSelBtn = document.getElementById('eq-sendselected');
   const autoCb = document.getElementById('eq-auto');
   let timer = null;
   let autoTimer = null;
@@ -280,6 +307,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
     return Array.from(document.querySelectorAll('.eq-cb:checked')).map(cb=>parseInt(cb.value)).filter(Boolean);
   }
   function updateButtons(){ prioritizeBtn.disabled = selectedIds().length===0; }
+  function sendSelected(){
+    const ids = selectedIds(); if(!ids.length) { alert('No rows selected.'); return; }
+    if (!confirm(`Send ${ids.length} selected email(s) now?`)) return;
+    sendSelBtn.disabled = true;
+    fetch('email_send_selected.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids, rate_ms: 75})})
+      .then(r=>r.json())
+      .then(j=>{
+        if (j && j.ok) {
+          alert(`Sent: ${j.result.sent}\nFailed: ${j.result.failed}\nProcessed: ${j.result.processed}`);
+        } else {
+          alert('Sending failed: ' + (j && j.error ? j.error : 'unknown error'));
+        }
+        load();
+      })
+      .catch(()=>{ alert('Request failed.'); })
+      .finally(()=>{ sendSelBtn.disabled = false; });
+  }
   function load(){
     const q = encodeURIComponent(searchInput.value || '');
     const url = `email_queue_data.php?status=${encodeURIComponent(selStatus.value)}&order=${encodeURIComponent(selOrder.value)}&limit=50&q=${q}`;
@@ -303,6 +347,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
       .then(r=>r.json()).then(j=>{ load(); }).finally(()=>{ sendBtn.disabled = false; });
   }
   sendBtn.addEventListener('click', ()=>sendBatch(10));
+  purgeBtn.addEventListener('click', function(){
+    if (!confirm('Delete all queued/sent credential emails? This cannot be undone.')) return;
+    purgeBtn.disabled = true;
+    fetch('email_purge_credentials.php', {method:'POST'})
+      .then(r=>r.json())
+      .then(j=>{ load(); })
+      .finally(()=>{ purgeBtn.disabled = false; });
+  });
+  sendAllBtn.addEventListener('click', function(){
+    if (!confirm('Send ALL queued credential emails now? Recommended only during off-hours.')) return;
+    if (!confirm('Are you sure? This may take a while and could hit provider limits.')) return;
+    sendAllBtn.disabled = true;
+    fetch('email_send_all.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({batch: 50, max_total: 10000, rate_ms: 100})})
+      .then(r=>r.json())
+      .then(j=>{
+        if (j && j.ok) {
+          alert(`Sent: ${j.result.sent}\nFailed: ${j.result.failed}\nProcessed: ${j.result.processed}\nRemaining: ${j.result.remaining}`);
+        } else {
+          alert('Sending failed: ' + (j && j.error ? j.error : 'unknown error'));
+        }
+        load();
+      })
+      .catch(()=>{ alert('Request failed.'); })
+      .finally(()=>{ sendAllBtn.disabled = false; });
+  });
   autoCb.addEventListener('change', function(){
     if (autoCb.checked){
       autoTimer = setInterval(()=>sendBatch(3), 5000);
@@ -315,12 +384,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_manual'])) {
     updateButtons();
   });
   tbody.addEventListener('change', function(e){ if(e.target.classList.contains('eq-cb')) updateButtons(); });
+  sendSelBtn.addEventListener('click', sendSelected);
   prioritizeBtn.addEventListener('click', function(){
     const ids = selectedIds(); if(!ids.length) return;
     fetch('email_prioritize.php', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids})})
       .then(r=>r.json()).then(()=>load());
   });
-  function start(){ load(); timer = setInterval(load, 15000); }
+  function start(){ load(); timer = setInterval(load, 5000); }
   document.addEventListener('visibilitychange', function(){ if(document.hidden){ clearInterval(timer); clearInterval(autoTimer); } else { start(); if (autoCb.checked) { autoTimer = setInterval(()=>sendBatch(3), 5000); } } });
   start();
 })();

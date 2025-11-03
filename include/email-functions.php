@@ -119,6 +119,10 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
      */
     function sendStudentCredentials($email, $firstName, $studentID, $password) {
         try {
+            $mode = getenv('EMAIL_MODE');
+            if ($mode !== false && in_array(strtolower($mode), ['off','disabled','none'], true)) {
+                return true; // skip sending entirely
+            }
             mailerConfiguredOrThrow();
             $mail = new PHPMailer(true);
             configureSMTP($mail);
@@ -161,6 +165,10 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
      */
     function sendInstructorCredentials($email, $name, $password) {
         try {
+            $mode = getenv('EMAIL_MODE');
+            if ($mode !== false && in_array(strtolower($mode), ['off','disabled','none'], true)) {
+                return true; // skip sending entirely
+            }
             mailerConfiguredOrThrow();
             $mail = new PHPMailer(true);
             configureSMTP($mail);
