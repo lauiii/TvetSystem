@@ -593,9 +593,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                         </div>
                     </div>
                     <div class="controls">
-                        <button type="button" id="saveBtn" class="btn primary">Save All Grades</button>
+                        <!-- <button type="button" id="saveBtn" class="btn primary">Save All Grades</button> -->
                          <!-- <button type="button" id="printBtn" class="btn ghost" onclick="window.print()">Print</button> -->
-                        <button type="submit" name="send_to_admin" value="1" class="btn btn-secondary">Send to Admin</button>
+                        <button type="submit" name="send_to_admin" value="1" class="btn btn-secondary">Saven</button>
                         <button type="button" id="resetBtn" class="btn ghost">Reset</button>
                         <button type="button" class="btn ghost" onclick="showPrintModal()">Print Period</button>
                     </div>
