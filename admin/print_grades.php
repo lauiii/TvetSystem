@@ -32,7 +32,7 @@ $stmt->execute([$studentId, $syId]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // All enrolled courses for this student (ensure rows even without grades)
-$cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name, c.units
+$cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name, c.units, c.semester
     FROM enrollments e
     INNER JOIN courses c ON e.course_id = c.id
     WHERE e.student_id = ? AND e.school_year_id = ?
@@ -109,7 +109,7 @@ foreach ($enrolledCourses as $c) {
     <div class="school-name">ANDRES SORIANO COLLEGES OF BISLIG</div>
     <div class="school-address">Mangagoy, Bislig City</div>
     <div class="grading-title">G R A D I N G - E V A L U A T I O N</div>
-    <?php $semRaw = strtolower((string)($activeSY['semester'] ?? '')); $semLabel = 'Semester'; if ($semRaw==='1'||$semRaw==='first'||$semRaw==='1st'){ $semLabel='1st Semester'; } elseif ($semRaw==='2'||$semRaw==='second'||$semRaw==='2nd'){ $semLabel='Second Semester'; } elseif ($semRaw==='3'||$semRaw==='summer'){ $semLabel='Summer'; } $yearNum = intval($s['year_level'] ?? 0); $yrLabel = $yearNum ? ($yearNum===1?'1st Year':($yearNum===2?'2nd Year':($yearNum===3?'3rd Year':($yearNum===4?'4th Year':'Year '.$yearNum)))) : ''; ?>
+    <?php $semRaw = strtolower((string)($activeSY['semester'] ?? '')); $semLabel = ''; if ($semRaw==='1'||$semRaw==='first'||$semRaw==='1st'){ $semLabel='1st Semester'; } elseif ($semRaw==='2'||$semRaw==='second'||$semRaw==='2nd'){ $semLabel='2nd Semester'; } elseif ($semRaw==='3'||$semRaw==='summer'){ $semLabel='Summer'; } if ($semLabel===''){ $sems=[]; foreach(($enrolledCourses??[]) as $cinfoTmp){ $sv=(int)($cinfoTmp['semester']??0); if($sv>0 && !in_array($sv,$sems,true)) $sems[]=$sv; } if(count($sems)===1){ $semLabel=($sems[0]===1?'1st Semester':($sems[0]===2?'2nd Semester':($sems[0]===3?'Summer':''))); } elseif(count($sems)>1){ $semLabel='All Semesters'; } else { $semLabel='Semester'; } } $yearNum = intval($s['year_level'] ?? 0); $yrLabel = $yearNum ? ($yearNum===1?'1st Year':($yearNum===2?'2nd Year':($yearNum===3?'3rd Year':($yearNum===4?'4th Year':'Year '.$yearNum)))) : ''; ?>
     <div class="hdr">
         <h1>Student Grades</h1>
         <div class="meta">

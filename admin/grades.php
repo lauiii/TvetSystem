@@ -23,7 +23,7 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // All enrolled courses for this student (ensure rows even without grades)
-    $cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name
+    $cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name, c.semester
         FROM enrollments e
         INNER JOIN courses c ON e.course_id = c.id
         WHERE e.student_id = ? AND e.school_year_id = ?
@@ -90,10 +90,22 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
 
     // Modal header
     $semRaw = strtolower((string)($activeSY['semester'] ?? ''));
-    $semLabel = 'Semester';
+    $semLabel = '';
     if ($semRaw === '1' || $semRaw === 'first' || $semRaw === '1st') { $semLabel = '1st Semester'; }
-    elseif ($semRaw === '2' || $semRaw === 'second' || $semRaw === '2nd') { $semLabel = 'Second Semester'; }
+    elseif ($semRaw === '2' || $semRaw === 'second' || $semRaw === '2nd') { $semLabel = '2nd Semester'; }
     elseif ($semRaw === '3' || $semRaw === 'summer' ) { $semLabel = 'Summer'; }
+    // Fallback: infer from courses if active semester not set
+    if ($semLabel === '') {
+        $sems = [];
+        foreach ($enrolledCourses as $cinfoTmp) { $sv = (int)($cinfoTmp['semester'] ?? 0); if ($sv>0 && !in_array($sv,$sems,true)) $sems[] = $sv; }
+        if (count($sems) === 1) {
+            $semLabel = ($sems[0]===1 ? '1st Semester' : ($sems[0]===2 ? '2nd Semester' : ($sems[0]===3 ? 'Summer' : '')));
+        } elseif (count($sems) > 1) {
+            $semLabel = 'All Semesters';
+        } else {
+            $semLabel = 'Semester';
+        }
+    }
 
     $yearNum = intval($s['year_level'] ?? 0);
     $yrLabel = $yearNum ? ($yearNum===1 ? '1st Year' : ($yearNum===2 ? '2nd Year' : ($yearNum===3 ? '3rd Year' : ($yearNum===4 ? '4th Year' : ('Year ' . $yearNum))))) : '';
@@ -154,7 +166,9 @@ $msg = '';
 
 // Filters
 $course_id = intval($_GET['course_id'] ?? 0);
-$student_id = intval($_GET['student_id'] ?? 0);
+$student_id = intval($_GET['student_id'] ?? 0); // legacy support if passed
+$student_q  = trim((string)($_GET['student_q'] ?? ''));
+$year_level = isset($_GET['year_level']) && $_GET['year_level'] !== '' ? intval($_GET['year_level']) : null;
 $program_id = intval($_GET['program_id'] ?? 0);
 
 // Fetch filter options
@@ -175,7 +189,8 @@ if (in_array('first_name', $userCols) && in_array('last_name', $userCols)) {
     $studentSelect[] = 'name';
 }
 $studentOrder = (in_array('last_name', $userCols) && in_array('first_name', $userCols)) ? 'last_name, first_name' : 'id';
-$students = $pdo->query("SELECT " . implode(',', $studentSelect) . " FROM users WHERE role = 'student' ORDER BY $studentOrder")->fetchAll();
+// Only needed if we still expose a dropdown; replaced by search bar below
+$students = [];
 
 // Programs filter options
 $programs = $pdo->query("SELECT id, name FROM programs ORDER BY name")->fetchAll();
@@ -215,6 +230,21 @@ $params = [];
 if ($activeSyId) { $query .= " AND e.school_year_id = ?"; $params[] = $activeSyId; }
 if ($course_id > 0) { $query .= " AND c.id = ?"; $params[] = $course_id; }
 if ($student_id > 0) { $query .= " AND u_student.id = ?"; $params[] = $student_id; }
+// Student search by ID or name
+if ($student_q !== '') {
+    $like = '%' . $student_q . '%';
+    $conds = [];
+    $query .= " AND (";
+    $conds[] = "u_student.student_id LIKE ?"; $params[] = $like;
+    if (in_array('first_name', $userCols) && in_array('last_name', $userCols)) {
+        $conds[] = "CONCAT(u_student.last_name,' ',u_student.first_name) LIKE ?"; $params[] = $like;
+        $conds[] = "CONCAT(u_student.first_name,' ',u_student.last_name) LIKE ?"; $params[] = $like;
+    }
+    if (in_array('name', $userCols)) { $conds[] = "u_student.name LIKE ?"; $params[] = $like; }
+    $query .= implode(' OR ', $conds) . ")";
+}
+// Year level filter (if column exists)
+if ($year_level !== null && in_array('year_level', $userCols)) { $query .= " AND u_student.year_level = ?"; $params[] = $year_level; }
 if ($program_id > 0) { $query .= " AND c.program_id = ?"; $params[] = $program_id; }
 
 $query .= " GROUP BY u_student.id, c.id ORDER BY " . (in_array('last_name', $userCols) ? "u_student.last_name, u_student.first_name" : "u_student.id") . ", c.course_code";
@@ -276,23 +306,8 @@ foreach ($studentCourseAverages as $r) {
                                 </select>
                             </div>
                             <div class="filter-group">
-                                <label>Student:</label>
-                                <select name="student_id">
-                                    <option value="">All Students</option>
-                                    <?php foreach ($students as $s): ?>
-                                        <option value="<?php echo $s['id']; ?>" <?php echo $student_id == $s['id'] ? 'selected' : ''; ?>>
-                                            <?php
-                                            if (isset($s['first_name']) && isset($s['last_name'])) {
-                                                echo htmlspecialchars($s['last_name'] . ', ' . $s['first_name'] . ' (' . $s['student_id'] . ')');
-                                            } elseif (isset($s['name'])) {
-                                                echo htmlspecialchars($s['name'] . ' (' . $s['student_id'] . ')');
-                                            } else {
-                                                echo htmlspecialchars($s['student_id']);
-                                            }
-                                            ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
+                                <label>Student (search)</label>
+                                <input type="text" name="student_q" placeholder="Search by name or ID" value="<?php echo htmlspecialchars($student_q); ?>" />
                             </div>
                             <div class="filter-group">
                                 <label>Program:</label>
@@ -306,6 +321,15 @@ foreach ($studentCourseAverages as $r) {
                                 </select>
                             </div>
                             <div class="filter-group">
+                                <label>Year Level</label>
+                                <select name="year_level">
+                                    <option value="">All Years</option>
+                                    <?php for ($yl=1; $yl<=4; $yl++): ?>
+                                        <option value="<?php echo $yl; ?>" <?php echo ($year_level===$yl)?'selected':''; ?>><?php echo $yl; ?><?php echo ($yl===1?'st':($yl===2?'nd':($yl===3?'rd':'th'))); ?> Year</option>
+                                    <?php endfor; ?>
+                                </select>
+                            </div>
+                            <div class="filter-group">
                                 <button class="btn primary" type="submit">Filter</button>
                                 <a href="grades.php" class="btn">Clear</a>
                             </div>
@@ -315,7 +339,7 @@ foreach ($studentCourseAverages as $r) {
 
                 <div style="height:20px"></div>
                 <div class="card">
-                    <h3>Grade Records (<?php echo count($studentCourseAverages); ?>)</h3>
+                    <h3>Grade Records</h3>
                     <?php if (count($studentCourseAverages) === 0): ?>
                         <p>No grade summaries found matching the criteria.</p>
                     <?php else: ?>
@@ -371,9 +395,9 @@ foreach ($studentCourseAverages as $r) {
     </div>
 
     <!-- View Grades Modal -->
-    <div id="gradesModal" style="display:none; position:fixed; inset:0; height:100vh; background:rgba(0,0,0,0.5); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-        <div style="background:#fff; width: min(95vw, 900px); max-height: 85vh; overflow:auto; border-radius:10px; padding:20px; border:1px solid #e5e7eb; box-shadow:0 10px 30px rgba(0,0,0,0.15); margin:0 auto;">
-            <h3 style="margin-bottom:10px; color:#9b25e7;">Student Grades</h3>
+    <div id="gradesModal" style="display:none; position:fixed; inset:0; height:100vh; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+        <div role="dialog" aria-modal="true" aria-labelledby="gradesModalTitle" tabindex="-1" style="background:#fff; width: min(96vw, 980px); max-height: calc(100vh - 40px); overflow:auto; -webkit-overflow-scrolling:touch; border-radius:12px; padding:18px; border:1px solid #e5e7eb; box-shadow:0 10px 30px rgba(0,0,0,0.18); margin:0 auto;">
+            <h3 id="gradesModalTitle" style="margin-bottom:10px; color:#9b25e7;">Student Grades</h3>
             <div id="gradesModalBody" class="table-responsive">
                 <div style="padding:16px; color:#666;">Loading...</div>
             </div>
@@ -409,7 +433,15 @@ foreach ($studentCourseAverages as $r) {
             const modal = document.getElementById('gradesModal');
             const body = document.getElementById('gradesModalBody');
             body.innerHTML = '<div style="padding:16px; color:#666;">Loading...</div>';
-            modal.style.display = 'block';
+            modal.style.display = 'flex';
+            // Lock background scroll and focus dialog for accessibility
+            const prevOverflow = document.body.style.overflow;
+            document.body.dataset.prevOverflow = prevOverflow;
+            document.body.style.overflow = 'hidden';
+            queueMicrotask(()=>{
+              const dlg = modal.querySelector('[role="dialog"]');
+              if (dlg) try { dlg.focus(); } catch(e) {}
+            });
             try {
                 const resp = await fetch('grades.php?action=student_grades&ajax=1&student_id=' + encodeURIComponent(studentId));
                 const html = await resp.text();
@@ -418,7 +450,13 @@ foreach ($studentCourseAverages as $r) {
                 body.innerHTML = '<div style="padding:16px; color:#b91c1c;">Failed to load grades.</div>';
             }
         }
-        function closeGradesModal(){ document.getElementById('gradesModal').style.display = 'none'; }
+        function closeGradesModal(){
+            const modal = document.getElementById('gradesModal');
+            modal.style.display = 'none';
+            // Restore background scroll
+            const prev = document.body.dataset.prevOverflow || '';
+            document.body.style.overflow = prev;
+        }
         window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeGradesModal(); });
         document.getElementById('gradesModal').addEventListener('click', (e)=>{ if (e.target.id==='gradesModal') closeGradesModal(); });
     </script>
@@ -503,6 +541,7 @@ foreach ($studentCourseAverages as $r) {
         }
 
         @media (max-width: 768px) {
+            #gradesModal > [role="dialog"] { width: 100%; max-height: calc(100vh - 24px); padding: 14px; border-radius:10px; }
             .filter-row {
                 flex-direction: column;
             }

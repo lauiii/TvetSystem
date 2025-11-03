@@ -67,10 +67,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
     }
 }
 
-// Resolve active school year and semester (semester falls back to 1 if column missing)
-$syRow = $pdo->query("SELECT id, CASE WHEN EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'school_years' AND COLUMN_NAME = 'active_semester') THEN active_semester ELSE 1 END AS active_semester FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+// Resolve active school year and semester from school_years.semester (fallback to 1)
+$syRow = $pdo->query("SELECT id, semester FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
 $activeSyId = $syRow['id'] ?? null;
-$activeSemester = (int)($syRow['active_semester'] ?? 1);
+$activeSemester = (int)($syRow['semester'] ?? 1);
 
 // Check if enrollments has school_year_id for filtering
 $enrCols = [];

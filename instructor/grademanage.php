@@ -32,6 +32,15 @@ $stmt->execute([$sectionId, $instructorId]);
 $section = $stmt->fetch();
 if (!$section) { header('Location: dashboard.php'); exit; }
 
+// Active school year + semester label
+$activeSY = $pdo->query("SELECT year, semester FROM school_years WHERE status='active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+$activeYearLabel = $activeSY['year'] ?? '';
+$semRaw = strtolower((string)($activeSY['semester'] ?? ''));
+$activeSemLabel = '';
+if ($semRaw==='1' || $semRaw==='first' || $semRaw==='1st') { $activeSemLabel = '1st Semester'; }
+elseif ($semRaw==='2' || $semRaw==='second' || $semRaw==='2nd') { $activeSemLabel = '2nd Semester'; }
+elseif ($semRaw==='3' || $semRaw==='summer') { $activeSemLabel = 'Summer'; }
+
 // Resolve names (best-effort)
 $instructorName = '';
 try {
@@ -283,7 +292,7 @@ $periodKeys = array_keys($grouped);
     <header class="page-header">
         <div>
             <h1>Manage Grades (v2)</h1>
-            <div class="meta"><?php echo htmlspecialchars($section['course_code'].' — '.$section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?></div>
+            <div class="meta"><?php echo htmlspecialchars($section['course_code'].' — '.$section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?><?php if($activeYearLabel!==''){ echo ' · SY '.htmlspecialchars($activeYearLabel); } ?><?php if($activeSemLabel!==''){ echo ' · '.htmlspecialchars($activeSemLabel); } ?></div>
         </div>
         <div class="meta small" style="display:flex; gap:8px; align-items:center;">
             <a href="dashboard.php" class="btn btn-primary">🏠 Dashboard</a>
@@ -531,18 +540,28 @@ function recalcAll(){
 }
 
 document.addEventListener('input', e=>{ if(e.target.matches('input.grade-input')) { recalcAll(); } });
-// Prevent Enter from accidental form submit in inputs; allow Shift+Enter to insert newline if any, otherwise no-op
-document.addEventListener('keydown', e=>{ if(e.target && e.target.matches('input.grade-input') && e.key==='Enter'){ e.preventDefault(); }});
-qs('#resetBtn').addEventListener('click', ()=>{ qs('#gradesForm').reset(); });
-qs('#saveBtn').addEventListener('click', async ()=>{
-  if(!validateAll()){ showMessage('Please fix invalid grade entries (red).', false); return; }
-  const form=new FormData(); form.append('ajax','1'); form.append('grades_json', JSON.stringify(gatherGrades()));
-  try{
-    const resp = await fetch(location.href, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: form });
-    const data = await resp.json();
-    if(data.success){ showMessage(data.message||'Saved', true); } else { showMessage(data.message||'Save failed', false); }
-  }catch(err){ showMessage('Network or server error when saving.', false); console.error(err); }
+// Pressing Enter in a grade input should behave like clicking Save (include submit_grades)
+document.addEventListener('keydown', e=>{
+  if(e.target && e.target.matches('input.grade-input') && (e.key==='Enter' || e.code==='NumpadEnter')){
+    e.preventDefault();
+    const form = qs('#gradesForm');
+    const saveBtn = qs('#saveBtn');
+    if (form) {
+      if (form.requestSubmit) {
+        form.requestSubmit(saveBtn || undefined);
+      } else {
+        // Fallback for very old browsers
+        if (!qs('input[name="submit_grades"]', form)) {
+          const hid = document.createElement('input');
+          hid.type='hidden'; hid.name='submit_grades'; hid.value='1';
+          form.appendChild(hid);
+        }
+        form.submit();
+      }
+    }
+  }
 });
+qs('#resetBtn').addEventListener('click', ()=>{ qs('#gradesForm').reset(); });
 
 // Send to Admin guarded submit
 qs('#sendToAdminBtn').addEventListener('click', ()=>{

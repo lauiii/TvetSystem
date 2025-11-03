@@ -335,8 +335,8 @@ $pendingFlags = $stmt->fetch()['count'];
                                 <h3><?php echo htmlspecialchars($section['course_name']); ?></h3>
                                 <div class="course-details">
                                     <?php echo htmlspecialchars($section['program_name']); ?> •
-                                    Year <?php echo $section['year_level']; ?> •
-                                    Semester <?php echo $section['semester']; ?> •
+                                    Year <?php echo (int)$section['year_level']; ?> •
+                                    <?php $semI=(int)$section['semester']; $semLbl=$semI===1?'1st Semester':($semI===2?'2nd Semester':($semI===3?'Summer':'Semester')); echo $semLbl; ?> •
                                     <?php echo $section['enrolled_count']; ?>/<?php echo $section['capacity']; ?> students
                                 </div>
                             </div>

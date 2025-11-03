@@ -29,9 +29,33 @@ try {
 
 // Active school year
 $activeSchoolYear = null;
+$activeSemesterRaw = null;
+$activeSemesterLabel = '';
 try {
-    $stmt = $pdo->query("SELECT year FROM school_years WHERE status = 'active' LIMIT 1");
-    $activeSchoolYear = $stmt->fetchColumn();
+    $stmt = $pdo->query("SELECT year, semester FROM school_years WHERE status = 'active' LIMIT 1");
+    $rowSY = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($rowSY) {
+        $activeSchoolYear = $rowSY['year'] ?? null;
+        $activeSemesterRaw = strtolower((string)($rowSY['semester'] ?? ''));
+        if ($activeSemesterRaw==='1' || $activeSemesterRaw==='first' || $activeSemesterRaw==='1st') { $activeSemesterLabel='1st Semester'; }
+        elseif ($activeSemesterRaw==='2' || $activeSemesterRaw==='second' || $activeSemesterRaw==='2nd') { $activeSemesterLabel='2nd Semester'; }
+        elseif ($activeSemesterRaw==='3' || $activeSemesterRaw==='summer') { $activeSemesterLabel='Summer'; }
+        // Fallback: infer from enrollments if empty/0
+        if ($activeSemesterLabel==='') {
+            try {
+                $syIdInf = (int)($pdo->query("SELECT id FROM school_years WHERE status='active' LIMIT 1")->fetchColumn());
+                if ($syIdInf) {
+                    $inf = $pdo->prepare("SELECT c.semester, COUNT(*) cnt FROM enrollments e INNER JOIN courses c ON e.course_id=c.id WHERE e.school_year_id=? AND c.semester IS NOT NULL AND c.semester>0 GROUP BY c.semester ORDER BY cnt DESC LIMIT 1");
+                    $inf->execute([$syIdInf]);
+                    $sv = (int)($inf->fetchColumn() ?: 0);
+                    if ($sv===1) $activeSemesterLabel='1st Semester';
+                    elseif ($sv===2) $activeSemesterLabel='2nd Semester';
+                    elseif ($sv===3) $activeSemesterLabel='Summer';
+                }
+            } catch (Exception $e) { /* ignore */ }
+            if ($activeSemesterLabel==='') { $activeSemesterLabel='Semester'; }
+        }
+    }
 } catch (Exception $e) {
     $activeSchoolYear = null;
 }
@@ -150,6 +174,62 @@ try {
     $coursesByYear = [];
 }
 
+// Graduates: final-year students (year_level=3) who completed all assessments (no NULL grades) in active SY
+$graduates = ['total_final'=>0, 'graduates'=>0, 'percent'=>0.0];
+$gradsByProgram = [];
+try {
+    $sy = $pdo->query("SELECT id FROM school_years WHERE status='active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    if ($sy) {
+        $syId = (int)$sy['id'];
+        // Final-year active students with active enrollments
+        $st = $pdo->query("SELECT u.id, u.program_id FROM users u WHERE u.role='student' AND u.year_level=3 AND (u.status IS NULL OR u.status='active')");
+        $allFinal = $st->fetchAll(PDO::FETCH_ASSOC);
+        if ($allFinal) {
+            $students = array_column($allFinal, 'id');
+            $graduates['total_final'] = count($students);
+            // Map programs
+            foreach ($allFinal as $r) { $pid=(int)$r['program_id']; if(!isset($gradsByProgram[$pid])) $gradsByProgram[$pid] = ['final'=>0,'grads'=>0,'name'=>'']; $gradsByProgram[$pid]['final']++; }
+            // Program names
+            $pnames = $pdo->query("SELECT id, name FROM programs")->fetchAll(PDO::FETCH_KEY_PAIR);
+            foreach ($gradsByProgram as $pid=>$_) { $gradsByProgram[$pid]['name'] = $pnames[$pid] ?? ('Program #'.$pid); }
+            // Enrollments in active SY for these students
+            $ph = implode(',', array_fill(0, count($students), '?'));
+            $enr = $pdo->prepare("SELECT e.id as eid, e.student_id, e.course_id FROM enrollments e WHERE e.school_year_id=? AND e.student_id IN ($ph)");
+            $enr->execute(array_merge([$syId], array_map('intval',$students)));
+            $byStu = [];
+            foreach ($enr->fetchAll(PDO::FETCH_ASSOC) as $r) { $byStu[(int)$r['student_id']][] = (int)$r['eid']; }
+            // Helpers
+            $getCid  = $pdo->prepare("SELECT course_id FROM enrollments WHERE id=? LIMIT 1");
+            $getItem = $pdo->prepare("SELECT ai.id FROM assessment_items ai INNER JOIN assessment_criteria ac ON ai.criteria_id=ac.id WHERE ac.course_id=?");
+            foreach ($students as $sid) {
+                $enrs = $byStu[$sid] ?? [];
+                if (!$enrs) { continue; }
+                $okAll = true;
+                foreach ($enrs as $eid) {
+                    $getCid->execute([$eid]);
+                    $cid = (int)$getCid->fetchColumn();
+                    if (!$cid) { $okAll=false; break; }
+                    $getItem->execute([$cid]);
+                    $items = array_column($getItem->fetchAll(PDO::FETCH_ASSOC),'id');
+                    if ($items) {
+                        $ph2 = implode(',', array_fill(0, count($items), '?'));
+                        $q = $pdo->prepare(sprintf("SELECT COUNT(*) FROM grades WHERE enrollment_id=? AND assessment_id IN (%s) AND grade IS NOT NULL", $ph2));
+                        $q->execute(array_merge([$eid], array_map('intval',$items)));
+                        $have = (int)$q->fetchColumn();
+                        if ($have < count($items)) { $okAll=false; break; }
+                    }
+                }
+                if ($okAll) {
+                    $graduates['graduates']++;
+                    // bump program count
+                    foreach ($allFinal as $r) { if ((int)$r['id']===$sid){ $pid=(int)$r['program_id']; $gradsByProgram[$pid]['grads']++; break; } }
+                }
+            }
+            $graduates['percent'] = $graduates['total_final']>0 ? round(($graduates['graduates']/$graduates['total_final'])*100,2) : 0.0;
+        }
+    }
+} catch (Exception $e) { /* ignore */ }
+
 // Pending flags list
 $flagsList = [];
 try {
@@ -189,9 +269,39 @@ try {
             
             <!-- Active School Year Banner -->
             <?php if ($activeSchoolYear): ?>
-                <div class="alert alert-info" style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border: 1px solid #2196f3; border-radius: 5px;">
-                    <strong>Active School Year:</strong> <?php echo htmlspecialchars($activeSchoolYear); ?>
+                <div class="alert alert-info" style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border: 1px solid #2196f3; border-radius: 5px; display:flex; align-items:center; gap:12px; justify-content:space-between;">
+                    <div>
+                        <strong><?php echo htmlspecialchars($activeSchoolYear); ?></strong>
+                        <?php if ($activeSemesterLabel!==''): ?>
+                            <span>• <?php echo htmlspecialchars($activeSemesterLabel); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <button type="button" class="btn" onclick="location.reload()" style="background:#2196f3;color:#fff;">Refresh</button>
                 </div>
+
+            <!-- Graduates Modal -->
+            <div id="graduatesModal" class="modal">
+                <div class="modal-content">
+                    <span class="modal-close" onclick="closeModal('graduatesModal')">&times;</span>
+                    <h2>Graduates (Active School Year)</h2>
+                    <p>Total final-year students: <?php echo (int)$graduates['total_final']; ?> • Graduated: <?php echo (int)$graduates['graduates']; ?> (<?php echo $graduates['percent']; ?>%)</p>
+                    <table class="modal-table">
+                        <thead><tr><th>Program</th><th>Final-Year</th><th>Graduated</th><th>%</th></tr></thead>
+                        <tbody>
+                            <?php if (!empty($gradsByProgram)): foreach ($gradsByProgram as $pg): $pct = $pg['final']>0 ? round(($pg['grads']/$pg['final'])*100,2) : 0; ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($pg['name']); ?></td>
+                                    <td><?php echo (int)$pg['final']; ?></td>
+                                    <td><?php echo (int)$pg['grads']; ?></td>
+                                    <td><?php echo $pct; ?>%</td>
+                                </tr>
+                            <?php endforeach; else: ?>
+                                <tr><td colspan="4" style="text-align:center;color:#999;">No data available</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
             <?php else: ?>
                 <div class="alert alert-warning" style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px;">
                     <strong>No Active School Year:</strong> Please set an active school year in the School Years section.
@@ -231,6 +341,11 @@ try {
                     <h3>Pending Flags</h3>
                     <div class="number"><?php echo $stats['flags']; ?></div>
                     <small style="color:#999;font-size:12px;margin-top:8px;display:block;">Click to view</small>
+                </div>
+                <div class="stat-card clickable" onclick="openModal('graduatesModal')">
+                    <h3>Graduates (Active SY)</h3>
+                    <div class="number"><?php echo (int)$graduates['graduates']; ?></div>
+                    <small style="color:#999;font-size:12px;margin-top:8px;display:block;">Final-year: <?php echo (int)$graduates['total_final']; ?> • <?php echo $graduates['percent']; ?>%</small>
                 </div>
             </div>
             
