@@ -21,6 +21,15 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         ORDER BY c.course_code, FIELD(ac.period,'prelim','midterm','finals')");
     $stmt->execute([$sid, $syId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // All enrolled courses for this student (ensure rows even without grades)
+    $cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name
+        FROM enrollments e
+        INNER JOIN courses c ON e.course_id = c.id
+        WHERE e.student_id = ? AND e.school_year_id = ?
+        ORDER BY c.course_code");
+    $cstmt->execute([$sid, $syId]);
+    $enrolledCourses = $cstmt->fetchAll(PDO::FETCH_ASSOC);
     // Fetch total possible per course per period for completeness
     $ps = $pdo->prepare("SELECT c.id as course_id, ac.period, SUM(ai.total_score) as possible
         FROM assessment_items ai
@@ -52,13 +61,11 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     $s = $stu->fetch(PDO::FETCH_ASSOC);
     $fullname = $s ? ($s['last_name'] . ', ' . $s['first_name']) : 'Student';
 
-    // Build final-per-course rows
+    // Build final-per-course rows (include all enrolled courses)
     $finals = [];
-    foreach ($possibleMap as $cid => $periods) {
-        // Determine course info
-        $cinfo = null;
-        foreach ($rows as $r) { if ((int)$r['course_id'] === (int)$cid) { $cinfo = $r; break; } }
-        if (!$cinfo) continue;
+    foreach ($enrolledCourses as $cinfo) {
+        $cid = (int)$cinfo['course_id'];
+        $periods = $possibleMap[$cid] ?? [];
         $pPos = $periods['prelim'] ?? 0.0; $mPos = $periods['midterm'] ?? 0.0; $fPos = $periods['finals'] ?? 0.0;
         $pSum = $sumGrades[$cid]['prelim'] ?? 0.0; $mSum = $sumGrades[$cid]['midterm'] ?? 0.0; $fSum = $sumGrades[$cid]['finals'] ?? 0.0;
         $pSub = $submittedPossible[$cid]['prelim'] ?? 0.0; $mSub = $submittedPossible[$cid]['midterm'] ?? 0.0; $fSub = $submittedPossible[$cid]['finals'] ?? 0.0;
@@ -69,9 +76,14 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         $haveAny = ($pPct !== null) || ($mPct !== null) || ($fPct !== null);
         $tent = $haveAny ? min(99, ((($pPct??0)*30 + ($mPct??0)*30 + ($fPct??0)*40) / 100.0)) : null;
         $hasBlank = !$pComplete || !$mComplete || !$fComplete;
-        $remarks = 'Incomplete';
-        if ($tent !== null) { $remarks = ($tent >= 75) ? 'Passed' : ($hasBlank ? 'Incomplete' : 'Failed'); }
-        $finals[] = ['code'=>$cinfo['course_code'], 'name'=>$cinfo['course_name'], 'grade'=>$tent, 'remarks'=>$remarks];
+        // Remarks: blank if incomplete or has blanks; only show Passed/Failed when complete
+        $remarks = '';
+        if ($tent !== null && !$hasBlank) { $remarks = ($tent >= 75) ? 'Passed' : 'Failed'; }
+        // Status: blank unless complete
+        $hasPeriods = ($pPos>0) || ($mPos>0) || ($fPos>0);
+        if (!$hasPeriods || ($pSub+$mSub+$fSub) <= 0 || $hasBlank) { $status=''; $statusCls=''; }
+        else { $status='Complete'; $statusCls='text-success'; }
+        $finals[] = ['code'=>$cinfo['course_code'], 'name'=>$cinfo['course_name'], 'grade'=>$tent, 'remarks'=>$remarks, 'status'=>$status, 'status_cls'=>$statusCls];
     }
 
     if (empty($finals)) { echo '<div style="padding:16px; color:#666;">No grades found for the active term.</div>'; exit; }
@@ -102,6 +114,7 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     echo '<th style="text-align:left;">Course Code</th>';
     echo '<th style="text-align:left;">Description</th>';
     echo '<th style="text-align:center;">Units</th>';
+    echo '<th style="text-align:center;">Status</th>';
     echo '<th style="text-align:center;">Remarks</th>';
     echo '<th style="text-align:center;">Final Rating</th>';
     echo '</tr></thead><tbody>';
@@ -110,11 +123,13 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     foreach ($finals as $fr) {
         $lee = ($fr['grade']===null) ? null : lee_from_percent($fr['grade']);
         if ($lee !== null) { $sumLee += $lee; $countLee++; }
-        $cls = ($fr['remarks']==='Passed') ? 'text-success' : (($fr['remarks']==='Failed') ? 'text-danger' : 'text-secondary');
+        $cls = ($fr['remarks']==='Passed') ? 'text-success' : (($fr['remarks']==='Failed') ? 'text-danger' : '');
         echo '<tr>';
         echo '<td><strong>' . htmlspecialchars($fr['code']) . '</strong></td>';
         echo '<td>' . htmlspecialchars($fr['name']) . '</td>';
         echo '<td style="text-align:center;">' . $defaultUnits . '</td>';
+        $stCls = $fr['status']!=='' ? htmlspecialchars($fr['status_cls']) : '';
+        echo '<td style="text-align:center;" class="' . $stCls . '">' . htmlspecialchars($fr['status']) . '</td>';
         echo '<td class="' . $cls . '" style="text-align:center;">' . htmlspecialchars($fr['remarks']) . '</td>';
         echo '<td style="text-align:center;">' . ($lee===null ? '' : htmlspecialchars(number_format($lee,2))) . '</td>';
         echo '</tr>';
@@ -188,14 +203,12 @@ $query = "
         c.program_id,
         p.name as program_name,
         ROUND(AVG(g.grade),2) as average_raw
-    FROM grades g
-    INNER JOIN enrollments e ON g.enrollment_id = e.id
+    FROM enrollments e
     INNER JOIN users u_student ON e.student_id = u_student.id
-    INNER JOIN assessment_items ai ON g.assessment_id = ai.id
-    INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-    INNER JOIN courses c ON ac.course_id = c.id
+    INNER JOIN courses c ON e.course_id = c.id
     LEFT JOIN programs p ON c.program_id = p.id
-    WHERE g.grade IS NOT NULL
+    LEFT JOIN grades g ON g.enrollment_id = e.id
+    WHERE 1=1
 ";
 
 $params = [];
@@ -358,8 +371,8 @@ foreach ($studentCourseAverages as $r) {
     </div>
 
     <!-- View Grades Modal -->
-    <div id="gradesModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000;">
-        <div style="background:#fff; max-width:900px; margin:6% auto; border-radius:10px; padding:20px; border:1px solid #e5e7eb;">
+    <div id="gradesModal" style="display:none; position:fixed; inset:0; height:100vh; background:rgba(0,0,0,0.5); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+        <div style="background:#fff; width: min(95vw, 900px); max-height: 85vh; overflow:auto; border-radius:10px; padding:20px; border:1px solid #e5e7eb; box-shadow:0 10px 30px rgba(0,0,0,0.15); margin:0 auto;">
             <h3 style="margin-bottom:10px; color:#9b25e7;">Student Grades</h3>
             <div id="gradesModalBody" class="table-responsive">
                 <div style="padding:16px; color:#666;">Loading...</div>

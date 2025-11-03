@@ -53,6 +53,15 @@ $stmt = $pdo->prepare("SELECT c.id as course_id, c.course_code, c.course_name, c
 $stmt->execute([$studentId, $syId]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// All enrolled courses for this student (ensure rows even without grades)
+$cstmt = $pdo->prepare("SELECT c.id AS course_id, c.course_code, c.course_name, c.units
+    FROM enrollments e
+    INNER JOIN courses c ON e.course_id = c.id
+    WHERE e.student_id = ? AND e.school_year_id = ?
+    ORDER BY c.course_code");
+$cstmt->execute([$studentId, $syId]);
+$enrolledCourses = $cstmt->fetchAll(PDO::FETCH_ASSOC);
+
 // Fetch total possible per course per period for completeness
 $ps = $pdo->prepare("SELECT c.id as course_id, ac.period, SUM(ai.total_score) as possible
     FROM assessment_items ai
@@ -75,12 +84,11 @@ foreach ($rows as $r) {
     }
 }
 
-// Build final-per-course rows
+// Build final-per-course rows (include all enrolled courses)
 $finals = [];
-foreach ($possibleMap as $cid => $periods) {
-    $cinfo = null;
-    foreach ($rows as $r) { if ((int)$r['course_id'] === (int)$cid) { $cinfo = $r; break; } }
-    if (!$cinfo) continue;
+foreach ($enrolledCourses as $c) {
+    $cid = (int)$c['course_id'];
+    $periods = $possibleMap[$cid] ?? [];
     $pPos = $periods['prelim'] ?? 0.0; $mPos = $periods['midterm'] ?? 0.0; $fPos = $periods['finals'] ?? 0.0;
     $pSum = $sumGrades[$cid]['prelim'] ?? 0.0; $mSum = $sumGrades[$cid]['midterm'] ?? 0.0; $fSum = $sumGrades[$cid]['finals'] ?? 0.0;
     $pSub = $submittedPossible[$cid]['prelim'] ?? 0.0; $mSub = $submittedPossible[$cid]['midterm'] ?? 0.0; $fSub = $submittedPossible[$cid]['finals'] ?? 0.0;
@@ -93,7 +101,7 @@ foreach ($possibleMap as $cid => $periods) {
     $hasBlank = !$pComplete || !$mComplete || !$fComplete;
     $remarks = 'Incomplete';
     if ($tent !== null) { $remarks = ($tent >= 75) ? 'Passed' : ($hasBlank ? 'Incomplete' : 'Failed'); }
-    $finals[] = ['code'=>$cinfo['course_code'], 'name'=>$cinfo['course_name'], 'units'=> (int)($cinfo['units'] ?? 3), 'grade'=>$tent, 'remarks'=>$remarks];
+    $finals[] = ['code'=>$c['course_code'], 'name'=>$c['course_name'], 'units'=> (int)($c['units'] ?? 3), 'grade'=>$tent, 'remarks'=>$remarks];
 }
 
 // Build HTML similar to modal/print page
