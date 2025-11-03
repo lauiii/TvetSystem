@@ -522,3 +522,19 @@ Payload: {"376":{"110":{"grade":""}},"377":{"110":{"grade":""}},"null":[]}
 2025-11-02T17:19:11+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
 2025-11-02T17:24:32+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
 2025-11-02T17:24:40+01:00 | [manage-grades] section_id=878, course_id=138, assessments=11, displayAssessments=11
+2025-11-03T12:45:58+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:49:17+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:49:25+01:00 | [manage-grades] section_id=905, course_id=369, assessments=3, displayAssessments=3
+2025-11-03T12:49:31+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:49:34+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:51:23+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:51:39+01:00 | [manage-grades] section_id=903, course_id=138, assessments=9, displayAssessments=9
+2025-11-03T12:59:56+01:00 | send_to_admin ok=1
+2025-11-03T13:00:24+01:00 | send_to_admin ok=1
+2025-11-03T13:03:17+01:00 | [criteria] course_id=138, count=2
+2025-11-03T13:03:38+01:00 | [manage-grades] section_id=905, course_id=369, assessments=0, displayAssessments=0
+2025-11-03T13:04:29+01:00 | send_to_admin ok=1
+2025-11-03T13:04:56+01:00 | send_to_admin ok=1
+2025-11-03T13:07:10+01:00 | send_to_admin ok=1
+2025-11-03T13:18:18+01:00 | [criteria] course_id=138, count=2
+2025-11-03T13:20:15+01:00 | [criteria] course_id=138, count=2
