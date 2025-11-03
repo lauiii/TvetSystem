@@ -1,4 +1,7 @@
 <?php
+header('Location: grademanage.php?section_id=' . urlencode($_GET['section_id'] ?? ''));
+exit;
+
 /**
  * Modern Manage Grades page for Instructors
  * - AJAX submission with JSON responses
@@ -63,20 +66,20 @@ try {
 // Auto-provision assessment structure for missing periods so instructors don't have to re-create items
 try {
     // Verify which periods already exist for this course
-    $pstmt = $pdo->prepare("SELECT DISTINCT period FROM assessment_criteria WHERE course_id = ?");
-    $pstmt->execute([$section['course_id']]);
+    $pstmt = $pdo->prepare("SELECT DISTINCT period FROM assessment_criteria WHERE section_id = ?");
+    $pstmt->execute([$section['id']]);
     $existingPeriods = array_map('strtolower', array_column($pstmt->fetchAll(PDO::FETCH_ASSOC), 'period'));
     $allPeriods = ['prelim','midterm','finals'];
     $missing = array_values(array_diff($allPeriods, $existingPeriods));
 
     if (!empty($missing)) {
-        // Choose a source period within this course to clone from (prefer 'prelim')
+        // Choose a source period within this section to clone from (prefer 'prelim')
         $sourcePeriod = in_array('prelim', $existingPeriods, true) ? 'prelim' : (count($existingPeriods) ? $existingPeriods[0] : null);
         if ($sourcePeriod !== null) {
             $pdo->beginTransaction();
-            // Fetch criteria of source period for this course
-            $srcCritStmt = $pdo->prepare("SELECT id, name, percentage FROM assessment_criteria WHERE course_id = ? AND period = ? ORDER BY id");
-            $srcCritStmt->execute([$section['course_id'], $sourcePeriod]);
+            // Fetch criteria of source period for this section
+            $srcCritStmt = $pdo->prepare("SELECT id, name, percentage FROM assessment_criteria WHERE section_id = ? AND period = ? ORDER BY id");
+            $srcCritStmt->execute([$section['id'], $sourcePeriod]);
             $sourceCriteria = $srcCritStmt->fetchAll(PDO::FETCH_ASSOC);
             // Prepare item fetch
             $srcItemStmt = $pdo->prepare("SELECT name, total_score FROM assessment_items WHERE criteria_id = ? ORDER BY id");
@@ -84,9 +87,9 @@ try {
             foreach ($missing as $tgtPeriod) {
                 if (!in_array($tgtPeriod, $allPeriods, true)) continue;
                 foreach ($sourceCriteria as $crit) {
-                    // Insert cloned criteria for target period scoped to this course
-                    $insCrit = $pdo->prepare("INSERT INTO assessment_criteria (course_id, name, period, percentage) VALUES (?, ?, ?, ?)");
-                    $insCrit->execute([$section['course_id'], $crit['name'], $tgtPeriod, $crit['percentage']]);
+                    // Insert cloned criteria for target period scoped to this section
+                    $insCrit = $pdo->prepare("INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage) VALUES (?, ?, ?, ?, ?)");
+                    $insCrit->execute([$section['course_id'], $section['id'], $crit['name'], $tgtPeriod, $crit['percentage']]);
                     $newCritId = (int)$pdo->lastInsertId();
                     // Clone items under this criteria
                     $srcItemStmt->execute([$crit['id']]);
@@ -112,10 +115,10 @@ function processGrades($pdo, $gradesPayload)
         $pdo->beginTransaction();
         // Validate assessment IDs and enrollment IDs belong to this course before inserting
         // Fetch valid assessment ids for the course
-        $validAssessmentStmt = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)");
-        // Use global $section to get course_id
+        $validAssessmentStmt = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE section_id = ?)");
+        // Use global $section to get section_id
         global $section;
-        $validAssessmentStmt->execute([$section['course_id']]);
+        $validAssessmentStmt->execute([$section['id']]);
         $validAssessments = array_column($validAssessmentStmt->fetchAll(), 'id');
         $validAssessmentsMap = array_flip($validAssessments);
 
@@ -195,11 +198,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_grades'])) {
     }
     $result = processGrades($pdo, $payload);
 
+    // Notify admin on submission
+    try {
+        require_once __DIR__ . '/../include/email-functions.php';
+        $course = ($section['course_code'] ?? '') . ' — ' . ($section['course_name'] ?? '');
+        $sec = $section['section_code'] ?? '';
+        // Resolve instructor name from session or DB
+        $instrName = isset($_SESSION['name']) && $_SESSION['name'] ? $_SESSION['name'] : '';
+        if ($instrName === '') {
+            try {
+                $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+                $nm = '';
+                if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
+                    $st = $pdo->prepare("SELECT CONCAT(first_name,' ',last_name) AS nm FROM users WHERE id = ? LIMIT 1");
+                    $st->execute([$instructorId]);
+                    $nm = $st->fetchColumn();
+                } elseif (in_array('name', $ucols)) {
+                    $st = $pdo->prepare("SELECT name AS nm FROM users WHERE id = ? LIMIT 1");
+                    $st->execute([$instructorId]);
+                    $nm = $st->fetchColumn();
+                }
+                if ($nm) { $instrName = $nm; }
+            } catch (Exception $ee) { /* ignore */ }
+        }
+        $semVal = isset($section['semester']) ? (int)$section['semester'] : null;
+        $semName = ($semVal === 1 ? 'First' : ($semVal === 2 ? 'Second' : ($semVal === 3 ? 'Summer' : '')));
+        $subject = 'Grades Submitted — ' . $course . ' (Section ' . $sec . ( $semName !== '' ? (', Sem ' . $semName) : '' ) . ')';
+        $body = '<p>Grades have been submitted.</p>'
+              . '<p><strong>Course:</strong> ' . htmlspecialchars($course) . '<br>'
+              . '<strong>Section:</strong> ' . htmlspecialchars($sec) . '<br>'
+              . ($semName !== '' ? ('<strong>Semester:</strong> ' . htmlspecialchars($semName) . '<br>') : '')
+              . '<strong>Instructor:</strong> ' . htmlspecialchars($instrName ?: 'Unknown') . '<br>'
+              . '<strong>When:</strong> ' . date('Y-m-d H:i:s') . '</p>'
+              . '<p>You can review in the system.</p>';
+        @sendNotificationEmail('ascbtvet@gmail.com', 'Admin', $subject, $body);
+        // In-app notification to current admin(s)
+        try {
+            require_once __DIR__ . '/../include/functions.php';
+            $admins = $pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll(PDO::FETCH_COLUMN);
+            if ($admins) {
+                $title = 'Grades Submitted by ' . ($instrName ?: 'Instructor');
+                $msg = 'Instructor ' . ($instrName ?: 'Unknown') . ' submitted grades for ' . $course . ' (Section ' . $sec . ($semName !== '' ? (', Sem ' . $semName) : '') . ').';
+                notify_users($pdo, array_map('intval',$admins), $title, $msg, 'info', null, null);
+            }
+        } catch (Exception $x) { /* ignore */ }
+    } catch (Exception $e) { /* ignore email errors */ }
+
     if ($isAjax) {
         // attach assessment averages to AJAX response for client refresh
         // compute updated averages
-        $avgStmt = $pdo->prepare("SELECT assessment_id, AVG(grade) as avg_grade FROM grades WHERE assessment_id IN (SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id = ?)) GROUP BY assessment_id");
-        $avgStmt->execute([$section['course_id']]);
+        $avgStmt = $pdo->prepare("SELECT assessment_id, AVG(grade) as avg_grade FROM grades WHERE assessment_id IN (SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE section_id = ?)) GROUP BY assessment_id");
+        $avgStmt->execute([$section['id']]);
         $avgs = [];
         foreach ($avgStmt->fetchAll() as $r) { $avgs[$r['assessment_id']] = $r['avg_grade'] !== null ? floatval($r['avg_grade']) : null; }
         $result['averages'] = $avgs;
@@ -223,10 +272,10 @@ $stmt = $pdo->prepare(
     "SELECT ai.id, ai.name, ai.total_score, ac.id as criteria_id, ac.name as criteria_name, ac.period, ac.percentage
     FROM assessment_items ai
     INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-    WHERE ac.course_id = ?
+    WHERE ac.section_id = ?
     ORDER BY ac.period, ai.name"
 );
-$stmt->execute([$section['course_id']]);
+$stmt->execute([$section['id']]);
 $assessments = $stmt->fetchAll();
 
 // Fetch enrolled students
@@ -388,20 +437,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
         $calc = function($per) use ($periodMeta, $assessments, $grades, $enroll){
             $possible = isset($periodMeta[$per]['possible']) ? floatval($periodMeta[$per]['possible']) : 0.0;
             if ($possible <= 0) return null;
-            $total = 0.0; $seen=0.0;
+            $total = 0.0; $hasAll=true; $seen=0.0;
             foreach ($assessments as $ar) {
                 if ($ar['period'] !== $per) continue;
                 $aid=(int)$ar['id'];
-                if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); }
+                if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); } else { $hasAll=false; }
             }
-            if ($seen <= 0) return null; // show partial if some items entered
+            if (!$hasAll || $seen < $possible) return null;
             return min(99, ($total / $possible) * 100.0);
         };
         $p=$calc('prelim'); $m=$calc('midterm'); $f=$calc('finals');
         $wPre=30; $wMid=30; $wFin=40; $den=$wPre+$wMid+$wFin;
         $haveAny = ($p!==null)||($m!==null)||($f!==null);
-        $tent = $haveAny ? min(100, ((($p ?? 0.0)*$wPre + ($m ?? 0.0)*$wMid + ($f ?? 0.0)*$wFin) / $den)) : null;
-
+        $tent = $haveAny ? min(99, ((($p??0)*$wPre + ($m??0)*$wMid + ($f??0)*$wFin)/$den)) : null;
         $leeFinal = $tent===null ? null : lee_from_percent($tent);
         $hasBlank = ($p===null)||($m===null)||($f===null);
         $remarks = 'Incomplete';
@@ -452,6 +500,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
         <div class="grades-grid">
             <div class="left">
                 <form id="gradesForm" method="POST">
+                    <input type="hidden" name="submit_grades" value="1">
                     <div>
                         <?php // Period tabs
                         $periodKeys = array_keys($grouped);
@@ -461,14 +510,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                                 <button type="button" class="btn period-tab <?php echo $i===0 ? 'primary' : 'ghost'; ?>" data-show-period="<?php echo htmlspecialchars($pkey); ?>"><?php echo htmlspecialchars(ucfirst($pkey)); ?></button>
                             <?php endforeach; ?>
                             <button type="button" class="btn period-tab ghost" data-show-period="final-result">Final Result</button>
-                        </div>
-                        <div class="print-header" style="display:none; margin:8px 0 12px; text-align:center;">
-                            <div style="font-weight:700; font-size:18px;">
-                                Grades — <span id="printPeriodLabel"><?php echo htmlspecialchars(ucfirst($periodKeys[0] ?? '')); ?></span>
-                            </div>
-                            <div class="small">
-                                <?php echo htmlspecialchars($section['course_code'] . ' — ' . $section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?>
-                            </div>
                         </div>
 
                         <?php // Render one table per period ?>
@@ -482,7 +523,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                                     }
                                 }
                             ?>
-                            <div class="period-table-wrap<?php echo ($pname === $periodKeys[0] ? ' active' : ''); ?>" data-period="<?php echo htmlspecialchars($pname); ?>" style="<?php echo ($pname === $periodKeys[0] ? '' : 'display:none;'); ?> overflow:auto;">
+                            <div class="period-table-wrap" data-period="<?php echo htmlspecialchars($pname); ?>" style="<?php echo ($pname === $periodKeys[0] ? '' : 'display:none;'); ?> overflow:auto;">
                                 <table class="grades grades-period-table" id="gradesTable-<?php echo htmlspecialchars($pname); ?>">
                                     <thead>
                                         <tr>
@@ -553,13 +594,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                                             $calc = function($per) use ($periodMeta, $assessments, $grades, $enroll){
                                                 $possible = isset($periodMeta[$per]['possible']) ? floatval($periodMeta[$per]['possible']) : 0.0;
                                                 if ($possible <= 0) return null;
-                                                $total = 0.0; $seen=0.0;
+                                                $total = 0.0; $hasAll=true; $seen=0.0;
                                                 foreach ($assessments as $ar) {
                                                     if ($ar['period'] !== $per) continue;
                                                     $aid=(int)$ar['id'];
-                                                    if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); }
+                                                    if (isset($grades[$enroll][$aid]) && $grades[$enroll][$aid]['grade'] !== null) { $total += floatval($grades[$enroll][$aid]['grade']); $seen += floatval($ar['total_score']); } else { $hasAll=false; }
                                                 }
-                                                if ($seen <= 0) return null; // show partial if some items entered
+                                                if (!$hasAll || $seen < $possible) return null; // incomplete
                                                 $val = ($total / $possible) * 100.0;
                                                 return min(99, $val);
                                             };
@@ -593,28 +634,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                         </div>
                     </div>
                     <div class="controls">
-                        <!-- <button type="button" id="saveBtn" class="btn primary">Save All Grades</button> -->
-                         <!-- <button type="button" id="printBtn" class="btn ghost" onclick="window.print()">Print</button> -->
-                        <button type="submit" name="send_to_admin" value="1" class="btn btn-secondary">Saven</button>
+                        <button type="button" id="saveBtn" class="btn primary">Save All Grades</button>
                         <button type="button" id="resetBtn" class="btn ghost">Reset</button>
-                        <button type="button" class="btn ghost" onclick="showPrintModal()">Print Period</button>
+                        <button type="button" id="printBtn" class="btn ghost" onclick="window.print()">Print</button>
+                        <button type="submit" name="send_to_admin" value="1" class="btn btn-secondary">Send to Admin</button>
                     </div>
                     <!-- Moved ajaxMessage here after removing the summary sidebar -->
                     <div id="ajaxMessage" style="margin-top:12px; display:none;"></div>
                 </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Print Modal -->
-    <div id="printModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
-        <div style="background:#fff; padding:24px; border-radius:8px; max-width:400px; width:90%;">
-            <h3 style="margin:0 0 16px;">Print Period Grades</h3>
-            <p style="margin:0 0 20px; color:#666;">Choose format for printing current period:</p>
-            <div style="display:flex; gap:12px; justify-content:flex-end;">
-                <button type="button" class="btn ghost" onclick="closePrintModal()">Cancel</button>
-                <button type="button" class="btn ghost" onclick="openPeriodPrint('html'); closePrintModal();">HTML</button>
-                <button type="button" class="btn primary" onclick="openPeriodPrint('pdf'); closePrintModal();">PDF</button>
             </div>
         </div>
     </div>
@@ -640,9 +667,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
     <style>
         @media print {
             .page-header, .controls, .notice, .btn, .menu-toggle { display:none !important; }
-            .print-header { display:block !important; }
-            .period-table-wrap { display:none !important; }
-            .period-table-wrap.active { display:block !important; }
             .print-signatures { display:block !important; }
         }
     </style>
@@ -658,26 +682,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
 
         // Period tab toggle
         function showPeriod(p){
-            // Show the requested period and hide the others; mark active for print CSS
+            // Show the requested period and hide the others
             qsa('.period-table-wrap').forEach(div => {
-                const isTarget = (div.getAttribute('data-period') === p);
-                div.style.display = isTarget ? '' : 'none';
-                if (isTarget) div.classList.add('active'); else div.classList.remove('active');
+                div.style.display = (div.getAttribute('data-period') === p) ? '' : 'none';
             });
             qsa('.period-tab').forEach(btn=>{
                 if(btn.getAttribute('data-show-period')===p){ btn.classList.remove('ghost'); btn.classList.add('primary'); }
                 else { btn.classList.add('ghost'); btn.classList.remove('primary'); }
             });
-            const span = qs('#printPeriodLabel');
-            if (span) {
-                const lbl = (p==='final-result') ? 'Final Result' : (p.charAt(0).toUpperCase()+p.slice(1));
-                span.textContent = lbl;
-            }
-            // Show Send to Admin button only on Final Result tab
-            const sendBtn = qs('#sendToAdminBtn');
-            if (sendBtn) {
-                sendBtn.style.display = (p === 'final-result') ? '' : 'none';
-            }
         }
 
         // Delegate clicks on tabs
@@ -690,41 +702,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
                 const p = (btn.getAttribute('data-show-period') || '').toLowerCase();
                 if (p) showPeriod(p);
             });
-            // Initialize print header label based on active period
-            const activeWrap = qs('.period-table-wrap.active');
-            if (activeWrap) {
-                const p = (activeWrap.getAttribute('data-period') || '').toLowerCase();
-                if (p) {
-                    const span = qs('#printPeriodLabel');
-                    if (span) span.textContent = (p==='final-result') ? 'Final Result' : (p.charAt(0).toUpperCase()+p.slice(1));
-                }
-            }
         });
-        
-        // Print helpers for period-specific print and PDF views
-        function getActivePeriod(){
-            const wrap = qs('.period-table-wrap.active');
-            const p = wrap ? (wrap.getAttribute('data-period') || '').toLowerCase() : '';
-            return (p && p !== 'final-result') ? p : null;
-        }
-        function showPrintModal(){
-            const p = getActivePeriod();
-            if (!p) { alert('Select Prelim, Midterm, or Finals tab to print.'); return; }
-            document.getElementById('printModal').style.display = 'flex';
-        }
-        function closePrintModal(){
-            document.getElementById('printModal').style.display = 'none';
-        }
-        function openPeriodPrint(fmt){
-            const p = getActivePeriod();
-            if (!p) { alert('Select Prelim, Midterm, or Finals tab to print.'); return; }
-            const secId = <?php echo (int)$section['id']; ?>;
-            const url = (fmt === 'pdf')
-                ? `print_period_grades_pdf.php?section_id=${secId}&period=${encodeURIComponent(p)}`
-                : `print_period_grades.php?section_id=${secId}&period=${encodeURIComponent(p)}`;
-            window.open(url, '_blank');
-        }
-        
+
         // Live summary recalculation
         function recalcSummary() {
             const rows = qsa('table.grades-period-table tbody tr');
@@ -909,9 +888,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
         // Events
         document.addEventListener('input', (e) => { if (e.target.matches('input.grade-input')) recalcSummary(); });
 
-        qs('#resetBtn').addEventListener('click', () => { document.getElementById('gradesForm').reset(); recalcSummary(); });   
+        qs('#resetBtn').addEventListener('click', () => { document.getElementById('gradesForm').reset(); recalcSummary(); });
+
         qs('#saveBtn').addEventListener('click', async () => {
-            if  (!validateAll()) { showMessage('Please fix invalid grade entries (red).', false); return; }
+            if (!validateAll()) { showMessage('Please fix invalid grade entries (red).', false); return; }
+
             const grades = gatherGrades();
             const form = new FormData();
             form.append('submit_grades', '1');
