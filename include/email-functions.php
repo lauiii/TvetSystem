@@ -53,7 +53,9 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             $mail->Port = SMTP_PORT ?: 587;
         }
         $mail->SMTPAutoTLS = true;
-        $mail->SMTPDebug = SMTP_DEBUG; // 0-4
+        // In the configureSMTP function, add this line before setting $mail->SMTPDebug
+        $debugLevel = defined('SMTP_DEBUG_OVERRIDE') ? SMTP_DEBUG_OVERRIDE : SMTP_DEBUG;
+        $mail->SMTPDebug = $debugLevel; // 0-4
         $mail->CharSet = 'UTF-8';
         // Shorter timeouts so failures don't hang the request
         $mail->Timeout = (int)(getenv('SMTP_TIMEOUT') ?: 20);
@@ -360,3 +362,16 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
 
 }
 ?>
+
+
+## How to use this test script:
+
+1. Save the code above as `test_email.php` in your tvetsystem root directory
+2. Open it in your browser (http://localhost/tvetsystem/test_email.php)
+3. Enter an email address where you want to receive the test email
+4. Click "Send Test Email"
+5. The script will attempt to send an email and display debug information
+
+This test will help you identify any issues with your email configuration. The debug output will show the SMTP conversation, which can help pinpoint specific problems like authentication failures, connection issues, or other SMTP errors.
+
+If you need to modify the email-functions.php file to support this test, you might need to add a way to override the debug level. Here's a small modification you could make:
