@@ -115,6 +115,7 @@ $flags = $flagsStmt->fetchAll();
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
   <title>My Flags</title>
   <style>
     body{font-family:system-ui,Segoe UI,Arial;background:#f5f6fa;color:#333;margin:0}

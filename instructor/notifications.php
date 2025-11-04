@@ -23,6 +23,7 @@ $groups = list_notifications_grouped($pdo, $userId);
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
   <title>Notifications - Instructor</title>
   <link rel="stylesheet" href="../assets/css/admin-style.css">
   <link rel="stylesheet" href="../assets/css/dark-mode.css">

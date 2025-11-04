@@ -31,10 +31,12 @@ try {
 $activeSchoolYear = null;
 $activeSemesterRaw = null;
 $activeSemesterLabel = '';
+$activeSyId = 0;
 try {
-    $stmt = $pdo->query("SELECT year, semester FROM school_years WHERE status = 'active' LIMIT 1");
+    $stmt = $pdo->query("SELECT id, year, semester FROM school_years WHERE status = 'active' LIMIT 1");
     $rowSY = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($rowSY) {
+        $activeSyId = (int)($rowSY['id'] ?? 0);
         $activeSchoolYear = $rowSY['year'] ?? null;
         $activeSemesterRaw = strtolower((string)($rowSY['semester'] ?? ''));
         if ($activeSemesterRaw==='1' || $activeSemesterRaw==='first' || $activeSemesterRaw==='1st') { $activeSemesterLabel='1st Semester'; }
@@ -156,13 +158,58 @@ try {
     $instructorsList = [];
 }
 
-// Programs with student counts
+// Programs with active student counts (and ids)
 $programsList = [];
+$yearCounts = [];
 try {
-    $stmt = $pdo->query("SELECT p.name, p.code, COUNT(u.id) as student_count FROM programs p LEFT JOIN users u ON p.id = u.program_id AND u.role = 'student' GROUP BY p.id ORDER BY p.name");
-    $programsList = $stmt->fetchAll();
+    if ($activeSyId) {
+        // total per program for active SY
+        $st = $pdo->prepare("SELECT p.id, p.name, p.code, COUNT(DISTINCT e.student_id) as student_count
+                              FROM programs p
+                              LEFT JOIN users u ON p.id=u.program_id AND u.role='student'
+                              LEFT JOIN enrollments e ON e.student_id=u.id AND e.school_year_id=?
+                              GROUP BY p.id, p.name, p.code
+                              ORDER BY p.name");
+        $st->execute([$activeSyId]);
+        $programsList = $st->fetchAll();
+        // per-year counts for active SY
+        $yc = $pdo->prepare("SELECT u.program_id, u.year_level, COUNT(DISTINCT e.student_id) cnt
+                              FROM enrollments e
+                              INNER JOIN users u ON u.id=e.student_id AND u.role='student'
+                              WHERE e.school_year_id=? AND u.year_level IN (1,2,3)
+                              GROUP BY u.program_id, u.year_level");
+        $yc->execute([$activeSyId]);
+        foreach ($yc->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $pid=(int)$r['program_id']; $yl=(int)$r['year_level']; $cnt=(int)$r['cnt'];
+            if (!isset($yearCounts[$pid])) $yearCounts[$pid]=[1=>0,2=>0,3=>0];
+            $yearCounts[$pid][$yl]=$cnt;
+        }
+    } else {
+        $stmt = $pdo->query("SELECT id, name, code, 0 as student_count FROM programs ORDER BY name");
+        $programsList = $stmt->fetchAll();
+    }
 } catch (Exception $e) {
     $programsList = [];
+}
+
+// AJAX: program students list by program (active SY)
+if (isset($_GET['ajax']) && $_GET['ajax']==='program_students') {
+    header('Content-Type: application/json');
+    $pid = (int)($_GET['pid'] ?? 0);
+    if (!$activeSyId || $pid<=0) { echo json_encode([]); exit; }
+    try {
+        $q = $pdo->prepare("SELECT u.id, COALESCE(u.student_id,'') AS student_id, u.first_name, u.last_name, u.email, u.year_level
+                             FROM enrollments e
+                             INNER JOIN users u ON u.id=e.student_id AND u.role='student'
+                             WHERE e.school_year_id=? AND u.program_id=?
+                             GROUP BY u.id
+                             ORDER BY u.year_level, u.last_name, u.first_name");
+        $q->execute([$activeSyId,$pid]);
+        echo json_encode($q->fetchAll(PDO::FETCH_ASSOC));
+    } catch (Exception $e) {
+        echo json_encode([]);
+    }
+    exit;
 }
 
 // Courses by year level
@@ -427,23 +474,39 @@ try {
             <div id="programsModal" class="modal">
                 <div class="modal-content">
                     <span class="modal-close" onclick="closeModal('programsModal')">&times;</span>
-                    <h2>Programs</h2>
+                    <h2>Programs (Active Enrollments by Year)</h2>
                     <table class="modal-table">
-                        <thead><tr><th>Program</th><th>Code</th><th>Students</th></tr></thead>
+                        <thead><tr><th>Program</th><th>Code</th><th>1st</th><th>2nd</th><th>3rd</th><th>Total</th><th>Action</th></tr></thead>
                         <tbody>
                             <?php if (count($programsList) > 0): ?>
                                 <?php foreach ($programsList as $row): ?>
+                                    <?php $pid=(int)$row['id']; $y1=$yearCounts[$pid][1]??0; $y2=$yearCounts[$pid][2]??0; $y3=$yearCounts[$pid][3]??0; ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($row['name']); ?></td>
                                         <td><?php echo htmlspecialchars($row['code']); ?></td>
-                                        <td><?php echo $row['student_count']; ?></td>
+                                        <td><?php echo (int)$y1; ?></td>
+                                        <td><?php echo (int)$y2; ?></td>
+                                        <td><?php echo (int)$y3; ?></td>
+                                        <td><?php echo (int)$row['student_count']; ?></td>
+                                        <td><button class="btn" onclick="viewProgramStudents(<?php echo $pid; ?>,'<?php echo htmlspecialchars(addslashes($row['name'])); ?>')">View</button></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="3" style="text-align:center;color:#999;">No programs found</td></tr>
+                                <tr><td colspan="7" style="text-align:center;color:#999;">No programs found</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Program Students Modal -->
+            <div id="programStudentsModal" class="modal">
+                <div class="modal-content" style="max-width:900px;">
+                    <span class="modal-close" onclick="closeModal('programStudentsModal')">&times;</span>
+                    <h2 id="psTitle">Program Students</h2>
+                    <div id="psBody">
+                        <p>Loading...</p>
+                    </div>
                 </div>
             </div>
             
@@ -530,6 +593,30 @@ try {
             document.getElementById(modalId).style.display = 'none';
         }
         
+        function viewProgramStudents(pid, name) {
+            const m = document.getElementById('programStudentsModal');
+            const body = document.getElementById('psBody');
+            document.getElementById('psTitle').textContent = 'Students — ' + name;
+            body.innerHTML = '<p>Loading...</p>';
+            m.style.display = 'block';
+            fetch('dashboard.php?ajax=program_students&pid=' + encodeURIComponent(pid))
+              .then(r => r.json())
+              .then(rows => {
+                if (!rows || rows.length===0) { body.innerHTML = '<p style="color:#999;">No enrolled students found for active school year.</p>'; return; }
+                const groups = {1:[],2:[],3:[]};
+                rows.forEach(r => { const y = parseInt(r.year_level||0,10); if (y===1||y===2||y===3) groups[y].push(r); });
+                function renderGroup(y){
+                  const label = y===1?'1st Year':(y===2?'2nd Year':'3rd Year');
+                  const list = groups[y];
+                  if (!list || list.length===0) return `<h3 style="margin-top:14px;">${label}</h3><div style="color:#999;">No students</div>`;
+                  const rowsHtml = list.map(s => `<tr><td>${(s.student_id||'')}</td><td>${(s.last_name||'')}, ${(s.first_name||'')}</td><td>${(s.email||'')}</td></tr>`).join('');
+                  return `<h3 style="margin-top:14px;">${label}</h3><div class="table-responsive"><table class="modal-table"><thead><tr><th>Student ID</th><th>Name</th><th>Email</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+                }
+                body.innerHTML = renderGroup(1) + renderGroup(2) + renderGroup(3);
+              })
+              .catch(()=>{ body.innerHTML = '<p style="color:#999;">Failed to load students.</p>'; });
+        }
+
         // Close modal when clicking outside
         window.onclick = function(event) {
             if (event.target.className === 'modal') {

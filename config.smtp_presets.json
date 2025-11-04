@@ -1,0 +1,28 @@
+{
+    "dumpi749": {
+        "SMTP_HOST": "smtp.gmail.com",
+        "SMTP_PORT": 587,
+        "SMTP_USER": "mydumpi749@gmail.com",
+        "SMTP_PASS": "jogabcszyuevwwon",
+        "SMTP_FROM": "mydumpi749@gmail.com",
+        "SMTP_FROM_NAME": "Andres Soriano Colleges of Bislig",
+        "SMTP_SECURE": "tls",
+        "SMTP_DEBUG": 0,
+        "EMAIL_MODE": "",
+        "SMTP_FORCE_IPV4": 0,
+        "SMTP_VERIFY_PEER": 1
+    },
+    "ascbtvet": {
+        "SMTP_HOST": "smtp.gmail.com",
+        "SMTP_PORT": 587,
+        "SMTP_USER": "ascbtvet@gmail.com",
+        "SMTP_PASS": "cukicjcgmwxfogty",
+        "SMTP_FROM": "ascbtvet@gmail.com",
+        "SMTP_FROM_NAME": "Andres Soriano Colleges of Bislig",
+        "SMTP_SECURE": "tls",
+        "SMTP_DEBUG": 0,
+        "EMAIL_MODE": "",
+        "SMTP_FORCE_IPV4": 0,
+        "SMTP_VERIFY_PEER": 1
+    }
+}

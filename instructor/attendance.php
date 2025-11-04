@@ -161,8 +161,9 @@ if ($sessionId && count($students) > 0) {
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
   <title>Attendance - <?php echo htmlspecialchars($section['course_code'] . ' — ' . $section['course_name']); ?></title>
   <style>
     body{font-family:system-ui,Segoe UI,Arial;background:#f5f6fa;color:#333;margin:0}

@@ -92,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['program_id'], $_POST[
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Promotions - Admin</title>
-  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
+  <link rel="icon" type="image/jpeg" href="../public/assets/icon/logo1.jfif">
   <link rel="stylesheet" href="../assets/css/admin-style.css">
   <link rel="stylesheet" href="../assets/css/dark-mode.css">
   <script src="../assets/js/dark-mode.js" defer></script>

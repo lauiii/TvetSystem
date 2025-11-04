@@ -316,6 +316,7 @@ $periodKeys = array_keys($grouped);
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
     <title>Manage Grades — <?php echo htmlspecialchars($section['course_name']); ?> (<?php echo htmlspecialchars($section['section_code']); ?>)</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
     <link rel="stylesheet" href="../assets/css/manage-grades.css">
@@ -326,7 +327,7 @@ $periodKeys = array_keys($grouped);
 <div class="page">
     <header class="page-header">
         <div>
-            <h1>Manage Grades (v2)</h1>
+            <h1>Manage Grades</h1>
             <div class="meta"><?php echo htmlspecialchars($section['course_code'].' — '.$section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?> · Program <?php echo htmlspecialchars($section['program_name']); ?><?php if($activeYearLabel!==''){ echo ' · SY '.htmlspecialchars($activeYearLabel); } ?><?php if($activeSemLabel!==''){ echo ' · '.htmlspecialchars($activeSemLabel); } ?></div>
         </div>
         <div class="meta small" style="display:flex; gap:8px; align-items:center;">

@@ -112,6 +112,7 @@ $days = [1=>'Monday',2=>'Tuesday',3=>'Wednesday',4=>'Thursday',5=>'Friday',6=>'S
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
   <title>My Schedules - <?php echo SITE_NAME; ?></title>
   <link rel="stylesheet" href="../assets/css/dark-mode.css">
   <script src="../assets/js/dark-mode.js" defer></script>

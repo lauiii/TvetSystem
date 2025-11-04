@@ -79,6 +79,7 @@ $pendingFlags = $stmt->fetch()['count'];
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Instructor Dashboard - <?php echo SITE_NAME; ?></title>
+    <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
     <link rel="stylesheet" href="../assets/css/dark-mode.css">
     <script src="../assets/js/dark-mode.js" defer></script>
     <style>

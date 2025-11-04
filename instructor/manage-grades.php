@@ -466,7 +466,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
     // Send email with CSV attachment
     $ok = sendEmailWithAttachment('ascbtvet@gmail.com', 'Admin', 'Section Grades — ' . ($section['course_code'] ?? ''), $sumHtml, 'grades.csv', $csv, 'text/csv');
     $success = $ok ? 'Grades sent to admin.' : '';
-    if (!$ok) { $error = 'Failed to send grades to admin.'; }
+    if (!$ok) { $error = 'Failed to send grades to admin.'; 
+    }
 }
 
 ?>
@@ -475,6 +476,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_to_admin'])) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
     <title>Manage Grades — <?php echo htmlspecialchars($section['course_name']); ?> (<?php echo htmlspecialchars($section['section_code']); ?>)</title>
     <link rel="stylesheet" href="../assets/css/admin-style.css">
     <link rel="stylesheet" href="../assets/css/manage-grades.css">

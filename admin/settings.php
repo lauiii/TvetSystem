@@ -113,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Settings - Admin</title>
-  <link rel="icon" type="image/svg+xml" href="../public/assets/icon/logo.svg">
+  <link rel="icon" type="image/png" href="../public/assets/icon/logo2.png">
   <link rel="stylesheet" href="../assets/css/admin-style.css">
   <link rel="stylesheet" href="../assets/css/dark-mode.css">
   <script src="../assets/js/dark-mode.js" defer></script>

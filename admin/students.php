@@ -150,7 +150,6 @@ if (isset($_GET['ajax'])) {
         </div>
     </form>
     <a class="btn" href="resend_passwords.php" style="text-decoration:none;">Resend Passwords</a>
-    <a class="btn" href="../scripts/add_sample_students.php" style="text-decoration:none; background:#6a0dad; color:#fff;">Add Sample Students</a>
 </div>
 
                     <div class="table-responsive">
