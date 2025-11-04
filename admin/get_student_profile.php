@@ -42,26 +42,62 @@ try {
         $hasSectionId = in_array('section_id', $enrollCols);
         
         if ($hasSectionId) {
-            $stmt = $pdo->prepare("
-                SELECT c.course_code, c.course_name, s.section_code,
-                       CONCAT(u.first_name, ' ', u.last_name) as instructor
+            // Use section-based instructor assignment; aggregate multiple instructors
+            $sql = "
+                SELECT 
+                  c.course_code,
+                  c.course_name,
+                  s.section_code,
+                  NULLIF(GROUP_CONCAT(DISTINCT
+                    TRIM(
+                      COALESCE(
+                        NULLIF(CONCAT(COALESCE(u.first_name,''),
+                                      CASE WHEN u.first_name IS NOT NULL AND u.first_name<>'' AND u.last_name IS NOT NULL AND u.last_name<>'' THEN ' ' ELSE '' END,
+                                      COALESCE(u.last_name,'')), ''),
+                        NULLIF(u.email,''),
+                        CONCAT('User #', u.id)
+                      )
+                    )
+                  SEPARATOR ', '), '') AS instructor
                 FROM enrollments e
                 JOIN courses c ON e.course_id = c.id
                 LEFT JOIN sections s ON e.section_id = s.id
-                LEFT JOIN users u ON c.instructor_id = u.id
+                LEFT JOIN instructor_sections ins ON ins.section_id = s.id
+                LEFT JOIN users u ON u.id = ins.instructor_id
                 WHERE e.student_id = ? AND e.school_year_id = ?
+                GROUP BY c.course_code, c.course_name, s.section_code
                 ORDER BY c.course_code
-            ");
+            ";
+            $stmt = $pdo->prepare($sql);
         } else {
-            $stmt = $pdo->prepare("
-                SELECT c.course_code, c.course_name, '' as section_code,
-                       CONCAT(u.first_name, ' ', u.last_name) as instructor
+            // No section_id in enrollments: fallback to course's sections -> instructors (course-level aggregate)
+            $sql = "
+                SELECT 
+                  c.course_code,
+                  c.course_name,
+                  '' as section_code,
+                  NULLIF(GROUP_CONCAT(DISTINCT
+                    TRIM(
+                      COALESCE(
+                        NULLIF(CONCAT(COALESCE(u.first_name,''),
+                                      CASE WHEN u.first_name IS NOT NULL AND u.first_name<>'' AND u.last_name IS NOT NULL AND u.last_name<>'' THEN ' ' ELSE '' END,
+                                      COALESCE(u.last_name,'')), ''),
+                        NULLIF(u.name,''),
+                        u.email,
+                        CONCAT('User #', u.id)
+                      )
+                    )
+                  SEPARATOR ', '), '') AS instructor
                 FROM enrollments e
                 JOIN courses c ON e.course_id = c.id
-                LEFT JOIN users u ON c.instructor_id = u.id
+                LEFT JOIN sections s ON s.course_id = c.id
+                LEFT JOIN instructor_sections ins ON ins.section_id = s.id
+                LEFT JOIN users u ON u.id = ins.instructor_id
                 WHERE e.student_id = ? AND e.school_year_id = ?
+                GROUP BY c.course_code, c.course_name
                 ORDER BY c.course_code
-            ");
+            ";
+            $stmt = $pdo->prepare($sql);
         }
         $stmt->execute([$studentId, $activeYear['id']]);
         $courses = $stmt->fetchAll(PDO::FETCH_ASSOC);
