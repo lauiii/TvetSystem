@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 04, 2025 at 02:54 AM
+-- Generation Time: Nov 04, 2025 at 05:08 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -3767,7 +3767,10 @@ INSERT INTO `instructor_sections` (`id`, `instructor_id`, `section_id`, `role`, 
 (17, 972, 903, 'secondary', '2025-11-03 06:37:05'),
 (19, 972, 912, 'secondary', '2025-11-03 08:43:30'),
 (20, 972, 904, 'secondary', '2025-11-03 15:32:47'),
-(21, 972, 901, 'secondary', '2025-11-04 01:52:48');
+(21, 972, 901, 'secondary', '2025-11-04 01:52:48'),
+(22, 972, 897, 'secondary', '2025-11-04 02:58:58'),
+(23, 972, 899, 'secondary', '2025-11-04 02:59:01'),
+(24, 972, 902, 'secondary', '2025-11-04 02:59:03');
 
 -- --------------------------------------------------------
 
@@ -4201,9 +4204,9 @@ INSERT INTO `section_requests` (`id`, `instructor_id`, `section_id`, `status`, `
 (8, 972, 912, 'approved', '', '', '2025-11-03 08:43:20', '2025-11-03 08:43:30'),
 (9, 972, 904, 'approved', '', '', '2025-11-03 12:49:17', '2025-11-03 15:32:47'),
 (10, 972, 901, 'approved', '', '', '2025-11-04 01:49:32', '2025-11-04 01:52:48'),
-(11, 972, 897, 'pending', '', NULL, '2025-11-04 01:53:00', '2025-11-04 01:53:00'),
-(12, 972, 899, 'pending', '', NULL, '2025-11-04 01:53:17', '2025-11-04 01:53:17'),
-(13, 972, 902, 'pending', '', NULL, '2025-11-04 01:53:22', '2025-11-04 01:53:22');
+(11, 972, 897, 'approved', '', '', '2025-11-04 01:53:00', '2025-11-04 02:58:58'),
+(12, 972, 899, 'approved', '', '', '2025-11-04 01:53:17', '2025-11-04 02:59:01'),
+(13, 972, 902, 'approved', '', '', '2025-11-04 01:53:22', '2025-11-04 02:59:03');
 
 -- --------------------------------------------------------
 
@@ -4588,7 +4591,7 @@ INSERT INTO `users` (`id`, `student_id`, `first_name`, `last_name`, `email`, `pa
 (1792, 'S251565924', 'Casey', 'Rivera', 's251565924@school.local', '', 'student', 15, 3, 'active', '2025-11-03 14:00:01'),
 (1793, 'S251524175', 'Jane', 'Rivera', 's251524175@school.local', '', 'student', 15, 3, 'active', '2025-11-03 14:00:01'),
 (1794, 'S251579458', 'Jordan', 'Perez', 's251579458@school.local', '', 'student', 15, 3, 'active', '2025-11-03 14:00:01'),
-(1795, 'S251595108', 'Morgan', 'Johnson', 's251595108@school.local', '', 'student', 15, 3, 'active', '2025-11-03 14:00:01');
+(1795, 'S251595108', 'Morgan', 'Johnson', 's251595108@school.local', '$2y$10$5GgXRKm6f8eu.rjJw4XD1.GlU3To8NX7xqftxiBlFBQ5zXnJ0o9z6', 'student', 15, 3, 'active', '2025-11-03 14:00:01');
 
 --
 -- Indexes for dumped tables
@@ -4877,7 +4880,7 @@ ALTER TABLE `instructor_schedules`
 -- AUTO_INCREMENT for table `instructor_sections`
 --
 ALTER TABLE `instructor_sections`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
 
 --
 -- AUTO_INCREMENT for table `notifications`
