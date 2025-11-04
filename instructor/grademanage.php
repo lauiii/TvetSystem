@@ -90,15 +90,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['submit_grades']) && iss
 }
 
 // Data loads
-// Assessments by course
+// Assessments scoped to this section (to avoid showing course-level leftovers)
 $stmt = $pdo->prepare(
     "SELECT ai.id, ai.name, ai.total_score, ac.id AS criteria_id, ac.name AS criteria_name, ac.period, ac.percentage
      FROM assessment_items ai
      INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
-     WHERE ac.course_id = ?
+     WHERE ac.section_id = ?
      ORDER BY FIELD(ac.period,'prelim','midterm','finals'), ac.id, ai.id"
 );
-$stmt->execute([$section['course_id']]);
+$stmt->execute([$sectionId]);
 $assessments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Students by course
@@ -123,8 +123,9 @@ if ($students) {
     }
 }
 
-// Group assessments
+// Group assessments (by period and criteria) and build assessment index for JS
 $grouped = [];
+$assessIndex = [];
 foreach ($assessments as $a) {
     $period = $a['period'] ?: 'Unspecified';
     $cid = (int)$a['criteria_id'];
@@ -136,6 +137,7 @@ foreach ($assessments as $a) {
     $grouped[$period]['criteria'][$cid]['assessments'][] = ['id'=>(int)$a['id'], 'name'=>$a['name'], 'max'=>(float)$a['total_score']];
     $grouped[$period]['criteria'][$cid]['possible'] += (float)$a['total_score'];
     $grouped[$period]['possible'] += (float)$a['total_score'];
+    $assessIndex[(int)$a['id']] = ['period'=>$period, 'criteria_id'=>$cid];
 }
 foreach (['prelim','midterm','finals'] as $p) { if (!isset($grouped[$p])) $grouped[$p] = ['criteria'=>[], 'period_percentage'=>0.0, 'possible'=>0.0]; }
 
@@ -202,7 +204,40 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['send_to_admin'])) {
               . $remarks . "\r\n";
     }
     $ok = sendEmailWithAttachment('ascbtvet@gmail.com', 'Admin', 'Section Grades — '.($section['course_code']??''), $sumHtml, 'grades.csv', $csv, 'text/csv');
-    if ($ok) { $_SESSION['flash_success'] = 'Grades sent to admin.'; } else { $_SESSION['flash_error'] = 'Failed to send grades to admin.'; }
+
+    // Record submission for this course and active school year so admin views are gated
+    $subRecorded = false;
+    try {
+        // Ensure table exists
+        $pdo->exec("CREATE TABLE IF NOT EXISTS course_grade_submissions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            course_id INT NOT NULL,
+            school_year_id INT NULL,
+            instructor_id INT NULL,
+            section_id INT NULL,
+            submitted_at DATETIME NOT NULL,
+            UNIQUE KEY uniq_course_sy (course_id, school_year_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Resolve active school year id (best-effort)
+        $syRow = $pdo->query("SELECT id FROM school_years WHERE status='active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $syId = isset($syRow['id']) ? (int)$syRow['id'] : null;
+
+        $insSub = $pdo->prepare("INSERT INTO course_grade_submissions (course_id, school_year_id, instructor_id, section_id, submitted_at)
+                                  VALUES (?,?,?,?,NOW())
+                                  ON DUPLICATE KEY UPDATE instructor_id=VALUES(instructor_id), section_id=VALUES(section_id), submitted_at=VALUES(submitted_at)");
+        $insSub->execute([ (int)$section['course_id'], $syId, (int)$instructorId, (int)$sectionId ]);
+        $subRecorded = true;
+    } catch (Exception $e) {
+        // no-op: submission record is best-effort
+        try { @file_put_contents(__DIR__.'/../logs/grades_errors.log', date('c')." | submission_record_failed: ".$e->getMessage()."\n", FILE_APPEND); } catch (Exception $ie) {}
+    }
+    // Success criteria: submission recorded; email is best-effort
+    if ($subRecorded) {
+        $_SESSION['flash_success'] = 'Grades submitted to admin.' . ($ok ? '' : ' (Email notification failed)');
+    } else {
+        $_SESSION['flash_error'] = 'Failed to submit grades to admin.' . ($ok ? '' : ' (Email also failed)');
+    }
 
     // Best-effort admin notify (separate informational email + in-app)
     try {
@@ -239,8 +274,8 @@ function processGrades(PDO $pdo, $gradesPayload, $section) {
     try {
         $pdo->beginTransaction();
         // Valid sets
-        $st = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE course_id=?)");
-        $st->execute([(int)$section['course_id']]);
+        $st = $pdo->prepare("SELECT id FROM assessment_items WHERE criteria_id IN (SELECT id FROM assessment_criteria WHERE section_id=?)");
+        $st->execute([ (int)($section['id'] ?? 0) ]);
         $validAssess = array_flip(array_column($st->fetchAll(PDO::FETCH_ASSOC),'id'));
         $st2 = $pdo->prepare("SELECT id FROM enrollments WHERE course_id=? AND status='enrolled'");
         $st2->execute([(int)$section['course_id']]);
@@ -292,11 +327,11 @@ $periodKeys = array_keys($grouped);
     <header class="page-header">
         <div>
             <h1>Manage Grades (v2)</h1>
-            <div class="meta"><?php echo htmlspecialchars($section['course_code'].' — '.$section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?><?php if($activeYearLabel!==''){ echo ' · SY '.htmlspecialchars($activeYearLabel); } ?><?php if($activeSemLabel!==''){ echo ' · '.htmlspecialchars($activeSemLabel); } ?></div>
+            <div class="meta"><?php echo htmlspecialchars($section['course_code'].' — '.$section['course_name']); ?> · Section <?php echo htmlspecialchars($section['section_code']); ?> · Program <?php echo htmlspecialchars($section['program_name']); ?><?php if($activeYearLabel!==''){ echo ' · SY '.htmlspecialchars($activeYearLabel); } ?><?php if($activeSemLabel!==''){ echo ' · '.htmlspecialchars($activeSemLabel); } ?></div>
         </div>
         <div class="meta small" style="display:flex; gap:8px; align-items:center;">
             <a href="dashboard.php" class="btn btn-primary">🏠 Dashboard</a>
-            <a href="assessments.php?course_id=<?php echo (int)$section['course_id']; ?>" class="btn btn-secondary">🧮 Assessments</a>
+            <a href="assessments_alt.php?section_id=<?php echo (int)$sectionId; ?>" class="btn btn-secondary">🧮 Assessments</a>
         </div>
     </header>
 
@@ -438,6 +473,8 @@ $periodKeys = array_keys($grouped);
 function qs(s,c=document){return c.querySelector(s)}
 function qsa(s,c=document){return Array.from(c.querySelectorAll(s))}
 const periodMeta = <?php echo json_encode($periodMeta); ?>;
+const assessIndex = <?php echo json_encode($assessIndex); ?>;
+const groupedMeta = <?php echo json_encode($grouped); ?>;
 
 function showPeriod(p){
   qsa('.period-table-wrap').forEach(div=>{div.style.display = (div.getAttribute('data-period')===p)?'':'none'; div.classList.toggle('active', div.getAttribute('data-period')===p)})
@@ -467,18 +504,37 @@ function recalcAll(){
     const period = wrap ? (wrap.getAttribute('data-period')||'').toLowerCase() : '';
     if (!period || period==='final-result') return;
     const inputs = qsa('input.grade-input', row);
-    let total = 0.0, submittedPossible = 0.0;
+    // Aggregate by criteria for weighted computation
+    const criteriaTotals = {}; const criteriaSeen = {}; const criteriaPossible = {};
+    const gm = groupedMeta[period] ? groupedMeta[period].criteria : {};
+    Object.keys(gm||{}).forEach(cid=>{ criteriaTotals[cid]=0.0; criteriaSeen[cid]=0.0; criteriaPossible[cid]=parseFloat((gm[cid]||{}).possible)||0.0; });
     inputs.forEach(inp=>{
+      const aid = inp.getAttribute('data-assessment-id');
+      const map = assessIndex[parseInt(aid||'0')]; if(!map) return;
+      const cid = String(map.criteria_id||''); if(!cid) return;
       const v = inp.value.trim();
       const max = parseFloat(inp.getAttribute('data-max'))||0.0;
-      if (v!=='' && !isNaN(v)) { total += parseFloat(v); submittedPossible += max; }
+      if (v!=='' && !isNaN(v)) { criteriaTotals[cid] += parseFloat(v); criteriaSeen[cid] += max; }
     });
-    const periodPossible = parseFloat((periodMeta[period]||{}).possible)||0.0;
-    const pct = periodPossible>0 ? Math.min(99,(total/periodPossible)*100.0) : null;
-    const complete = submittedPossible >= periodPossible && periodPossible>0;
+    // Weighted period percent = sum_over_criteria( (tot/possible)*criteriaPercentage )
+    let pct = null; let complete = true; let accum = 0.0;
+    Object.keys(criteriaTotals).forEach(cid=>{
+      const poss = criteriaPossible[cid]||0.0;
+      const cfg = (gm[cid]||{});
+      const cPct = poss>0 ? (Math.min(99,(criteriaTotals[cid]/poss)*100.0)) : null;
+      const weight = parseFloat(cfg.percentage||0);
+      if (cPct==null) { complete=false; return; }
+      if ((criteriaSeen[cid]||0) < poss) { complete=false; }
+      accum += (cPct * (weight/100.0));
+    });
+    if (!isNaN(accum)) pct = accum;
+    // If period config not 100% exactly, treat as incomplete
+    const perCfg = (groupedMeta[period]||{}).period_percentage||0.0;
+    if (Math.abs(perCfg - 100.0) > 0.001) complete = false;
     // Update cells in this row
     const pctCell = row.querySelector(`td.period-total-cell[data-period="${period}"]`);
     if (pctCell) pctCell.textContent = pct==null ? '' : pct.toFixed(2)+'%';
+
     const leeCell = row.querySelector('td.lee-cell');
     const remCell = row.querySelector('td.remarks-cell');
     let lee = null, remText='Incomplete', remCls='text-secondary';
@@ -499,41 +555,82 @@ function recalcAll(){
     const enr = row.getAttribute('data-enrollment-id'); if(!enr) return;
     if(!perStudent[enr]) perStudent[enr] = { totals:{}, };
     const inputs = qsa('input.grade-input', row);
+    // Compute weighted period score per period
+    const perTotals = {};
     inputs.forEach(inp=>{
       const period = (inp.getAttribute('data-period')||'').toLowerCase();
+      const aid = parseInt(inp.getAttribute('data-assessment-id')||'0');
+      const map = assessIndex[aid]; if(!map) return;
+      const cid = String(map.criteria_id||'');
       const v = inp.value.trim(); const num = (v===''||isNaN(v)) ? null : parseFloat(v);
-      if(!perStudent[enr].totals[period]) perStudent[enr].totals[period] = 0.0;
-      if(num!==null) perStudent[enr].totals[period] += num;
+      const max = parseFloat(inp.getAttribute('data-max'))||0.0;
+      if(!perTotals[period]) perTotals[period] = {};
+      if(!perTotals[period][cid]) perTotals[period][cid] = {sum:0.0, seen:0.0};
+      if(num!==null){ perTotals[period][cid].sum += num; perTotals[period][cid].seen += max; }
+    });
+    Object.keys(perTotals).forEach(p=>{
+      let accum = 0.0; let complete = true;
+      const gm = (groupedMeta[p]||{}).criteria||{};
+      Object.keys(gm).forEach(cid=>{
+        const poss = parseFloat((gm[cid]||{}).possible)||0.0;
+        const weight = parseFloat((gm[cid]||{}).percentage)||0.0;
+        const seen = (perTotals[p][cid]||{}).seen||0.0;
+        const sum  = (perTotals[p][cid]||{}).sum||0.0;
+        if (poss>0){ const cPct = seen>=poss ? Math.min(99,(sum/poss)*100.0) : null; if (cPct==null) complete=false; else accum += cPct*(weight/100.0); }
+      });
+      perStudent[enr].totals[p] = isNaN(accum)? null : accum;
+      // Enforce 100% config
+      const perCfg = (groupedMeta[p]||{}).period_percentage||0.0;
+      if (Math.abs(perCfg-100.0)>0.001) perStudent[enr].totals[p] = null;
     });
   });
+
   // Update rows
   Object.keys(perStudent).forEach(enr=>{
     const totals = perStudent[enr].totals;
-    const pPossible = parseFloat((periodMeta['prelim']||{}).possible)||0.0;
-    const mPossible = parseFloat((periodMeta['midterm']||{}).possible)||0.0;
-    const fPossible = parseFloat((periodMeta['finals']||{}).possible)||0.0;
-    const p = pPossible>0 && totals['prelim']!=null ? Math.min(99,(totals['prelim']/pPossible)*100.0) : null;
-    const m = mPossible>0 && totals['midterm']!=null ? Math.min(99,(totals['midterm']/mPossible)*100.0) : null;
-    const f = fPossible>0 && totals['finals']!=null ? Math.min(99,(totals['finals']/fPossible)*100.0) : null;
+    const p = totals['prelim']!=null ? Math.min(99, totals['prelim']) : null;
+    const m = totals['midterm']!=null ? Math.min(99, totals['midterm']) : null;
+    const f = totals['finals']!=null ? Math.min(99, totals['finals']) : null;
+
     // Update period table inline total cells if present
     qsa(`tr[data-enrollment-id="${enr}"] td.period-total-cell[data-period="prelim"]`).forEach(td=>{ td.textContent = (p==null?'':p.toFixed(2)+'%'); });
     qsa(`tr[data-enrollment-id="${enr}"] td.period-total-cell[data-period="midterm"]`).forEach(td=>{ td.textContent = (m==null?'':m.toFixed(2)+'%'); });
     qsa(`tr[data-enrollment-id="${enr}"] td.period-total-cell[data-period="finals"]`).forEach(td=>{ td.textContent = (f==null?'':f.toFixed(2)+'%'); });
-    // Final result updates
-    const wPre=30.0,wMid=30.0,wFin=40.0, den=wPre+wMid+wFin;
-    const haveAny = (p!==null)||(m!==null)||(f!==null);
-    const cum = haveAny ? Math.min(99, (( (p||0)*wPre + (m||0)*wMid + (f||0)*wFin )/den)) : null;
-    const lee = cum==null ? null : leeFromPercent(cum);
-    const hasBlank = (p===null)||(m===null)||(f===null);
-    let remark='Incomplete', cls='text-secondary';
-    if(cum!==null){ if(cum>=75.0){ remark='Passed'; cls='text-success'; } else { remark = hasBlank ? 'Incomplete' : 'Failed'; cls = hasBlank ? 'text-secondary' : 'text-danger'; } }
+    // Final result updates with Conditional logic
+    const wPre=30.0, wMid=30.0, wFin=40.0, den=wPre+wMid+wFin;
+    const achieved = (p||0)*(wPre/100.0) + (m||0)*(wMid/100.0) + (f||0)*(wFin/100.0);
+    const remW = (p==null? wPre:0) + (m==null? wMid:0) + (f==null? wFin:0);
+    const target = 75.0; // target percentage overall
+    let cum = null, lee = null, remark='Incomplete', cls='text-secondary';
+    if (remW <= 0) {
+      // Nothing remaining -> final
+      cum = Math.min(99, achieved); // already weighted sum
+      if (cum >= target) { remark='Passed'; cls='text-success'; lee = leeFromPercent(cum); }
+      else { remark='Failed'; cls='text-danger'; lee = 5.00; }
+    } else {
+      // Still remaining periods
+      const needed = (target - achieved) / (remW/100.0); // needed average percent across remaining periods
+      if (needed <= 0) {
+        remark='Passed'; cls='text-success'; // already safe regardless of remaining
+        cum = Math.min(99, achieved);
+        lee = leeFromPercent(cum);
+      } else if (needed > 100) {
+        remark = 'Will Fail (needs > 100% in remaining)'; cls='text-danger';
+        cum = Math.min(99, achieved);
+        // no LEE yet
+      } else {
+        remark = 'Conditional — needs ≥ ' + needed.toFixed(2) + '% avg on remaining'; cls='text-warning';
+        cum = Math.min(99, achieved);
+        // no LEE yet
+      }
+    }
     const fr = finalTable ? qs(`tr[data-enrollment-id="${enr}"]`, finalTable) : null;
     if(fr){
       const pc = qs('.prelim-cell', fr); if(pc) pc.textContent = p==null?'':p.toFixed(2);
       const mc = qs('.midterm-cell', fr); if(mc) mc.textContent = m==null?'':m.toFixed(2);
       const fc = qs('.finals-cell', fr); if(fc) fc.textContent = f==null?'':f.toFixed(2);
       const tc = qs('.tentative-cell', fr); if(tc) tc.textContent = cum==null?'':cum.toFixed(2);
-      const lc = qs('.lee-cell', fr); if(lc) lc.textContent = lee==null?'—':lee.toFixed(2);
+      const lc = qs('.lee-cell', fr); if(lc) lc.textContent = (lee==null?'—':lee.toFixed(2));
       const rc = qs('.remarks-cell', fr); if(rc){ rc.textContent = remark; rc.className = 'remarks-cell '+cls; }
     }
   });

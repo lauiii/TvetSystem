@@ -344,8 +344,11 @@ $pendingFlags = $stmt->fetch()['count'];
                                 <a href="manage-grades.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-primary">
                                     Manage Grades
                                 </a>
-                                <a href="assessments.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">
+                                <a href="assessments_alt.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">
                                     Assessments
+                                </a>
+                                <a href="schedules.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
+                                    Schedule
                                 </a>
                                 <a href="attendance.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
                                     Attendance

@@ -18,8 +18,12 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         INNER JOIN enrollments e ON g.enrollment_id = e.id
         INNER JOIN courses c ON e.course_id = c.id
         WHERE e.student_id = ? AND e.school_year_id = ?
+          AND EXISTS (
+              SELECT 1 FROM course_grade_submissions s
+              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
+          )
         ORDER BY c.course_code, FIELD(ac.period,'prelim','midterm','finals')");
-    $stmt->execute([$sid, $syId]);
+    $stmt->execute([$sid, $syId, $syId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // All enrolled courses for this student (ensure rows even without grades)
@@ -27,17 +31,27 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         FROM enrollments e
         INNER JOIN courses c ON e.course_id = c.id
         WHERE e.student_id = ? AND e.school_year_id = ?
+          AND EXISTS (
+              SELECT 1 FROM course_grade_submissions s
+              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
+          )
         ORDER BY c.course_code");
-    $cstmt->execute([$sid, $syId]);
+    $cstmt->execute([$sid, $syId, $syId]);
     $enrolledCourses = $cstmt->fetchAll(PDO::FETCH_ASSOC);
     // Fetch total possible per course per period for completeness
     $ps = $pdo->prepare("SELECT c.id as course_id, ac.period, SUM(ai.total_score) as possible
         FROM assessment_items ai
         INNER JOIN assessment_criteria ac ON ai.criteria_id = ac.id
         INNER JOIN courses c ON ac.course_id = c.id
-        WHERE c.id IN (SELECT e.course_id FROM enrollments e WHERE e.student_id = ? AND e.school_year_id = ?)
+        WHERE c.id IN (
+            SELECT e.course_id FROM enrollments e WHERE e.student_id = ? AND e.school_year_id = ?
+        )
+          AND EXISTS (
+              SELECT 1 FROM course_grade_submissions s
+              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
+          )
         GROUP BY c.id, ac.period");
-    $ps->execute([$sid, $syId]);
+    $ps->execute([$sid, $syId, $syId]);
     $possibleMap = [];
     foreach ($ps->fetchAll(PDO::FETCH_ASSOC) as $p) { $possibleMap[$p['course_id']][strtolower($p['period'])] = floatval($p['possible']); }
 
@@ -294,17 +308,6 @@ foreach ($studentCourseAverages as $r) {
                     <h3>Filter Grades</h3>
                     <form method="GET" class="filter-form">
                         <div class="filter-row">
-                            <div class="filter-group">
-                                <label>Course:</label>
-                                <select name="course_id">
-                                    <option value="">All Courses</option>
-                                    <?php foreach ($courses as $c): ?>
-                                        <option value="<?php echo $c['id']; ?>" <?php echo $course_id == $c['id'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($c['course_code'] . ' - ' . $c['course_name']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
                             <div class="filter-group">
                                 <label>Student (search)</label>
                                 <input type="text" name="student_q" placeholder="Search by name or ID" value="<?php echo htmlspecialchars($student_q); ?>" />

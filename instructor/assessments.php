@@ -27,16 +27,32 @@ $sectionsList = $sectionsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get selected section
 $sectionId = intval($_GET['section_id'] ?? ($sectionsList[0]['section_id'] ?? 0));
-// Derive course id from selected section
-$courseId = 0;
-foreach ($sectionsList as $row) { if ((int)$row['section_id'] === $sectionId) { $courseId = (int)$row['course_id']; break; } }
+// Support legacy/link using course_id by mapping to first matching section for this instructor
+if ($sectionId === 0) {
+    $qCourseId = intval($_GET['course_id'] ?? 0);
+    if ($qCourseId > 0) {
+        $map = $pdo->prepare("SELECT s.id FROM instructor_sections ins INNER JOIN sections s ON s.id=ins.section_id WHERE ins.instructor_id=? AND s.course_id=? AND s.status='active' ORDER BY s.id LIMIT 1");
+        $map->execute([$instructorId, $qCourseId]);
+        $sid = (int)$map->fetchColumn();
+        if ($sid > 0) { header('Location: assessments.php?section_id='.$sid); exit; }
+    }
+}
+// Derive course id and selected section info
+$courseId = 0; $selectedSection = null;
+foreach ($sectionsList as $row) {
+    if ((int)$row['section_id'] === $sectionId) {
+        $courseId = (int)$row['course_id'];
+        $selectedSection = $row;
+        break;
+    }
+}
 
 // Handle add criteria
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_criteria') {
     $course_id = intval($_POST['course_id'] ?? 0);
     $section_id = intval($_POST['section_id'] ?? $sectionId);
     $name = sanitize($_POST['name'] ?? '');
-    $period = sanitize($_POST['period'] ?? '');
+    $period = strtolower(sanitize($_POST['period'] ?? ''));
     $percentage = floatval($_POST['percentage'] ?? 0);
 
     // Verify instructor teaches this section
@@ -79,34 +95,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $error = 'Total criteria percentage for ' . ucfirst($period) . ' cannot exceed ' . $periodLimits[$period] . '%. Current total: ' . $currentPeriodTotal . '%.';
         } else {
             try {
-                    // Strengthen duplicate criteria prevention: use TRIM + case-insensitive COLLATE and a transaction
-                    $pdo->beginTransaction();
+                // Build slug from name (lowercase, alnum + dashes) and normalize period lowercase
+                $slug = strtolower(trim($name));
+                $slug = preg_replace('/[^a-z0-9]+/i', '-', $slug);
+                $slug = trim($slug, '-');
+
+                // Transaction for duplicate checks and insert
+                $pdo->beginTransaction();
+                try {
+                    $dup = null;
+                    // Prefer slug-based duplicate using section_id (most common schema)
                     try {
-                        $dupCrit = $pdo->prepare('SELECT id FROM assessment_criteria WHERE section_id = ? AND period = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
-                        $dupCrit->execute([$section_id, $period, $name]);
-                        if ($dupCrit->fetch()) {
-                            $pdo->rollBack();
-                            $error = 'A criteria with that name already exists for this course and period.';
-                        } else {
-                            // compute effective percentage (within-period × period weight)
-                            $pkey = strtolower($period) === 'finals' ? 'final' : strtolower($period);
-                            $pweight = $periodWeights[$pkey] ?? 0;
-                            $effective = ($pweight > 0) ? (($percentage / 100.0) * $pweight) : 0;
-                            try {
-                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?, ?)');
-                                $stmt->execute([$course_id, $section_id, $name, $period, $percentage, $effective]);
-                            } catch (Exception $e) {
-                                // fallback if column not yet added
-                                $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage) VALUES (?, ?, ?, ?, ?)');
-                                $stmt->execute([$course_id, $section_id, $name, $period, $percentage]);
-                            }
-                            $pdo->commit();
-                            $msg = 'Assessment criteria added successfully.';
-                        }
+                        $dupCrit = $pdo->prepare('SELECT id FROM assessment_criteria WHERE section_id = ? AND period = ? AND slug = ? LIMIT 1');
+                        $dupCrit->execute([$section_id, $period, $slug]);
+                        $dup = $dupCrit->fetch(PDO::FETCH_ASSOC);
                     } catch (Exception $e) {
-                        $pdo->rollBack();
-                        throw $e;
+                        $dup = null;
                     }
+                    // If not found, try course_id variant
+                    if (!$dup) {
+                        try {
+                            $dupCrit2 = $pdo->prepare('SELECT id FROM assessment_criteria WHERE course_id = ? AND period = ? AND slug = ? LIMIT 1');
+                            $dupCrit2->execute([$course_id, $period, $slug]);
+                            $dup = $dupCrit2->fetch(PDO::FETCH_ASSOC);
+                        } catch (Exception $e2) {
+                            $dup = null;
+                        }
+                    }
+                    // If slug column not present on table, fallback to case-insensitive name under section
+                    if (!$dup) {
+                        try {
+                            $dupCrit3 = $pdo->prepare('SELECT id FROM assessment_criteria WHERE section_id = ? AND period = ? AND TRIM(name) COLLATE utf8mb4_general_ci = TRIM(?) COLLATE utf8mb4_general_ci LIMIT 1');
+                            $dupCrit3->execute([$section_id, $period, $name]);
+                            $dup = $dupCrit3->fetch(PDO::FETCH_ASSOC);
+                        } catch (Exception $e3) { /* ignore */ }
+                    }
+
+                    if ($dup) {
+                        // If duplicate exists but has NO items, treat as stale: delete then allow re-insert
+                        $itemsCountStmt = $pdo->prepare('SELECT COUNT(*) FROM assessment_items WHERE criteria_id = ?');
+                        $itemsCountStmt->execute([(int)$dup['id']]);
+                        $cntItems = (int)$itemsCountStmt->fetchColumn();
+                        if ($cntItems === 0) {
+                            $delStale = $pdo->prepare('DELETE FROM assessment_criteria WHERE id = ?');
+                            $delStale->execute([(int)$dup['id']]);
+                            // proceed to insert fresh criteria
+                        } else {
+                            // Criteria already exists and has items — reuse instead of erroring
+                            $pdo->rollBack();
+                            $msg = 'Criteria already exists for this course and period.';
+                            goto after_add_criteria_txn;
+                        }
+                    }
+
+                    // compute effective percentage (within-period × period weight)
+                    $pkey = strtolower($period) === 'finals' ? 'final' : strtolower($period);
+                    $pweight = $periodWeights[$pkey] ?? 0;
+                    $effective = ($pweight > 0) ? (($percentage / 100.0) * $pweight) : 0;
+
+                    // Try insert including slug; fallback if column missing
+                    try {
+                        $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, slug, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?, ?, ?)');
+                        $stmt->execute([$course_id, $section_id, $name, $slug, $period, $percentage, $effective]);
+                    } catch (Exception $e) {
+                        try {
+                            $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?, ?)');
+                            $stmt->execute([$course_id, $section_id, $name, $period, $percentage, $effective]);
+                        } catch (Exception $e2) {
+                            // ultimate fallback without effective_percentage
+                            $stmt = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, period, percentage) VALUES (?, ?, ?, ?, ?)');
+                            $stmt->execute([$course_id, $section_id, $name, $period, $percentage]);
+                        }
+                    }
+
+                    $pdo->commit();
+                    $msg = 'Assessment criteria added successfully.';
+                } catch (Exception $e) {
+                    $pdo->rollBack();
+                    throw $e;
+                }
+after_add_criteria_txn:
             } catch (Exception $e) {
                 $error = 'Failed to add criteria: ' . $e->getMessage();
             }
@@ -283,8 +351,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $error = 'You do not have permission to delete this item.';
     } else {
         try {
+            // Fetch parent criteria_id BEFORE deletion
+            $critId = 0;
+            try {
+                $pre = $pdo->prepare('SELECT criteria_id FROM assessment_items WHERE id = ?');
+                $pre->execute([$id]);
+                $critId = (int)$pre->fetchColumn();
+            } catch (Exception $e) { $critId = 0; }
+
+            // Delete the item
             $stmt = $pdo->prepare('DELETE FROM assessment_items WHERE id = ?');
             $stmt->execute([$id]);
+
+            // If the parent criteria now has zero items, auto-delete the criteria to avoid empty rows
+            if ($critId > 0) {
+                try {
+                    $remainStmt = $pdo->prepare('SELECT COUNT(*) FROM assessment_items WHERE criteria_id = ?');
+                    $remainStmt->execute([$critId]);
+                    if ((int)$remainStmt->fetchColumn() === 0) {
+                        $delCrit = $pdo->prepare('DELETE FROM assessment_criteria WHERE id = ?');
+                        $delCrit->execute([$critId]);
+                    }
+                } catch (Exception $e) { /* ignore */ }
+            }
             $msg = 'Assessment item deleted successfully.';
         } catch (Exception $e) {
             $error = 'Failed to delete item: ' . $e->getMessage();
@@ -577,22 +666,40 @@ if ($sectionId > 0) {
             <div class="alert alert-success"><?php echo htmlspecialchars($msg); ?></div>
         <?php endif; ?>
 
-        <div class="card">
-            <h2 style="color: #6a0dad; margin-bottom: 20px;">Select Course</h2>
-            <form method="GET">
-                <div class="form-group">
-                    <label for="section_id">Course:</label>
-                    <select name="section_id" id="section_id" class="form-control" onchange="this.form.submit()">
-                        <option value="">Select a section...</option>
-                        <?php foreach ($sectionsList as $sec): ?>
-                            <option value="<?php echo (int)$sec['section_id']; ?>" <?php echo $sectionId == (int)$sec['section_id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($sec['course_code'] . ' - ' . $sec['section_code'] . ' — ' . $sec['course_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+        <?php if (!$sectionId): ?>
+            <div class="card">
+                <h2 style="color: #6a0dad; margin-bottom: 20px;">Select Course</h2>
+                <form method="GET">
+                    <div class="form-group">
+                        <label for="section_id">Course:</label>
+                        <select name="section_id" id="section_id" class="form-control" onchange="this.form.submit()">
+                            <option value="">Select a section...</option>
+                            <?php foreach ($sectionsList as $sec): ?>
+                                <option value="<?php echo (int)$sec['section_id']; ?>" <?php echo $sectionId == (int)$sec['section_id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($sec['course_code'] . ' - ' . $sec['section_code'] . ' — ' . $sec['course_name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </form>
+            </div>
+        <?php else: ?>
+            <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                <div>
+                    <h2 style="color:#6a0dad;margin:0 0 6px;">Assessments</h2>
+                    <?php if ($selectedSection): ?>
+                        <?php $yl=(int)($selectedSection['year_level']??0); $ylLbl=$yl===1?'1st Year':($yl===2?'2nd Year':($yl===3?'3rd Year':($yl>0?$yl.'th Year':'Year'))); $semI=(int)($selectedSection['semester']??0); $semLbl=$semI===1?'1st Semester':($semI===2?'2nd Semester':($semI===3?'Summer':'')); ?>
+                        <div style="color:#555;">
+                            <strong><?php echo htmlspecialchars($selectedSection['course_code'].' — '.$selectedSection['course_name']); ?></strong>
+                            • Section <?php echo htmlspecialchars($selectedSection['section_code']); ?>
+                            • <?php echo htmlspecialchars($ylLbl); ?>
+                            <?php if ($semLbl!==''): ?>• <?php echo htmlspecialchars($semLbl); ?><?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
-            </form>
-        </div>
+                <a href="?" class="btn btn-secondary">Change</a>
+            </div>
+        <?php endif; ?>
 
         <?php if ($sectionId > 0): ?>
             <div class="card">
