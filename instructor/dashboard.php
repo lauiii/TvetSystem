@@ -188,6 +188,16 @@ $pendingFlags = $stmt->fetch()['count'];
             margin-bottom: 20px;
             font-size: 22px;
         }
+        .group { border: 1px solid #eee; border-radius: 10px; margin-bottom: 16px; }
+        .group-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:#faf8ff; border-bottom:1px solid #eee; border-radius:10px 10px 0 0; }
+        .group-title { font-weight:800; color:#4b5563; }
+        .year-block { border-top:1px solid #eee; }
+        .year-header { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#fff; }
+        .year-title { font-weight:700; color:#6a0dad; }
+        .collapse-btn { background:#6a0dad; color:#fff; border:none; border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:600; }
+        .collapse-btn.small { background:#9b59b6; padding:4px 10px; }
+        .group-body { padding: 12px 14px 16px; }
+        .hidden { display:none; }
         
         .course-list {
             display: grid;
@@ -354,41 +364,65 @@ $pendingFlags = $stmt->fetch()['count'];
             <h2>📚 My Courses</h2>
 
             <?php if (count($sections) > 0): ?>
-                <div class="course-list">
-                    <?php foreach ($sections as $section): ?>
-                        <div class="course-item">
-                            <div class="course-info">
-                                <div class="course-code"><?php echo htmlspecialchars($section['course_code']); ?> - <?php echo htmlspecialchars($section['section_code']); ?></div>
-                                <h3><?php echo htmlspecialchars($section['course_name']); ?></h3>
-                                <div class="course-details">
-                                    <?php echo htmlspecialchars($section['program_name']); ?> •
-                                    Year <?php echo (int)$section['year_level']; ?> •
-                                    <?php $semI=(int)$section['semester']; $semLbl=$semI===1?'1st Semester':($semI===2?'2nd Semester':($semI===3?'Summer':'Semester')); echo $semLbl; ?> •
-                                    <?php echo $section['enrolled_count']; ?>/<?php echo $section['capacity']; ?> students
+                <?php
+                    $grouped = [];
+                    foreach ($sections as $sec) {
+                        $prog = isset($sec['program_name']) && $sec['program_name']!=='' ? $sec['program_name'] : 'Unassigned Program';
+                        $yr = (int)($sec['year_level'] ?? 0);
+                        if ($yr < 1 || $yr > 4) { $yr = 1; }
+                        if (!isset($grouped[$prog])) $grouped[$prog] = [];
+                        if (!isset($grouped[$prog][$yr])) $grouped[$prog][$yr] = [];
+                        $grouped[$prog][$yr][] = $sec;
+                    }
+                    ksort($grouped);
+                ?>
+
+                <?php foreach ($grouped as $programName => $years): ?>
+                    <div class="group" data-group>
+                        <div class="group-header">
+                            <div class="group-title"><?php echo htmlspecialchars($programName); ?></div>
+                            <button class="collapse-btn" type="button" data-toggle="group">Hide</button>
+                        </div>
+
+                        <?php foreach ([1,2,3,4] as $yrNum): if (empty($years[$yrNum])) continue; ?>
+                            <div class="year-block" data-year>
+                                <div class="year-header">
+                                    <div class="year-title">Year <?php echo $yrNum; ?></div>
+                                    <button class="collapse-btn small" type="button" data-toggle="year">Hide</button>
+                                </div>
+                                <div class="group-body">
+                                    <div class="course-list">
+                                        <?php foreach ($years[$yrNum] as $section): ?>
+                                            <div class="course-item">
+                                                <div class="course-info">
+                                                    <div class="course-code"><?php echo htmlspecialchars($section['course_code']); ?> - <?php echo htmlspecialchars($section['section_code']); ?></div>
+                                                    <h3><?php echo htmlspecialchars($section['course_name']); ?></h3>
+                                                    <div class="course-details">
+                                                        <?php echo htmlspecialchars($section['program_name']); ?> •
+                                                        Year <?php echo (int)$section['year_level']; ?> •
+                                                        <?php $semI=(int)$section['semester']; $semLbl=$semI===1?'1st Semester':($semI===2?'2nd Semester':($semI===3?'Summer':'Semester')); echo $semLbl; ?> •
+                                                        <?php echo $section['enrolled_count']; ?>/<?php echo $section['capacity']; ?> students
+                                                    </div>
+                                                </div>
+                                                <div class="course-actions">
+                                                    <a href="manage-grades.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-primary">Manage Grades</a>
+                                                    <a href="assessments_alt.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">Assessments</a>
+                                                    <a href="schedules.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">Schedule</a>
+                                                    <a href="attendance.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">Attendance</a>
+                                                    <form method="POST" style="display:inline-block; margin-left:8px;" onsubmit="return confirm('Are you sure you want to leave this section? You can be re-assigned later by an admin.');">
+                                                        <input type="hidden" name="action" value="leave_section">
+                                                        <input type="hidden" name="section_id" value="<?php echo (int)$section['section_id']; ?>">
+                                                        <button type="submit" class="btn btn-danger">Leave Section</button>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="course-actions">
-                                <a href="manage-grades.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-primary">
-                                    Manage Grades
-                                </a>
-                                <a href="assessments_alt.php?course_id=<?php echo $section['course_id']; ?>" class="btn btn-secondary">
-                                    Assessments
-                                </a>
-                                <a href="schedules.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
-                                    Schedule
-                                </a>
-                                <a href="attendance.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
-                                    Attendance
-                                </a>
-                                <form method="POST" style="display:inline-block; margin-left:8px;" onsubmit="return confirm('Are you sure you want to leave this section? You can be re-assigned later by an admin.');">
-                                    <input type="hidden" name="action" value="leave_section">
-                                    <input type="hidden" name="section_id" value="<?php echo (int)$section['section_id']; ?>">
-                                    <button type="submit" class="btn btn-danger">Leave Section</button>
-                                </form>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endforeach; ?>
             <?php else: ?>
                 <div class="empty-state">
                     <div class="empty-state-icon">📚</div>
@@ -398,5 +432,28 @@ $pendingFlags = $stmt->fetch()['count'];
             <?php endif; ?>
         </div>
     </div>
+    <script>
+      document.addEventListener('click', function(e){
+        const btn = e.target.closest('button[data-toggle]');
+        if (!btn) return;
+        const mode = btn.getAttribute('data-toggle');
+        if (mode === 'group') {
+          const group = btn.closest('[data-group]');
+          if (!group) return;
+          const blocks = group.querySelectorAll('[data-year]');
+          const anyVisible = Array.from(blocks).some(b => !b.classList.contains('hidden'));
+          const hide = anyVisible; // if something visible, hide all; otherwise show all
+          blocks.forEach(b => b.classList.toggle('hidden', hide));
+          btn.textContent = hide ? 'Show' : 'Hide';
+        } else if (mode === 'year') {
+          const year = btn.closest('[data-year]');
+          if (!year) return;
+          const body = year.querySelector('.group-body');
+          if (!body) return;
+          const nowHidden = body.classList.toggle('hidden');
+          btn.textContent = nowHidden ? 'Show' : 'Hide';
+        }
+      });
+    </script>
 </body>
 </html>
