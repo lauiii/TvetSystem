@@ -67,6 +67,19 @@ $availableSections = $pdo->query("
     ORDER BY p.code, c.course_code, s.section_code
 ")->fetchAll(PDO::FETCH_ASSOC);
 
+// Group by program then year for rendering
+$grouped = [];
+foreach ($availableSections as $s) {
+    $pname = trim($s['program_name'] ?: $s['program_code']);
+    $yr = (int)$s['year_level']; if ($yr < 1 || $yr > 4) { $yr = 1; }
+    if (!isset($grouped[$pname])) { $grouped[$pname] = []; }
+    if (!isset($grouped[$pname][$yr])) { $grouped[$pname][$yr] = []; }
+    $grouped[$pname][$yr][] = $s;
+}
+ksort($grouped, SORT_NATURAL | SORT_FLAG_CASE);
+foreach ($grouped as &$yrs) { ksort($yrs); }
+unset($yrs);
+
 // Fetch instructor's pending requests
 $pendingRequests = $pdo->prepare("
     SELECT 
@@ -418,27 +431,41 @@ $requests = $pendingRequests->fetchAll(PDO::FETCH_ASSOC);
         <!-- Available Sections -->
         <div class="card">
             <h2>🔓 Available Sections (<?= count($availableSections) ?>)</h2>
-            
+            <div style="margin:10px 0 16px; display:flex; gap:8px; align-items:center;">
+                <input type="text" id="sectionSearch" class="form-control" placeholder="Search by course, section, program, year..." style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
+            </div>
             <?php if (count($availableSections) > 0): ?>
-                <div class="section-grid">
-                    <?php foreach ($availableSections as $section): ?>
-                        <div class="section-item">
-                            <div class="section-info">
-                                <h4><?= htmlspecialchars($section['course_code']) ?> - <?= htmlspecialchars($section['section_code']) ?></h4>
-                                <div><?= htmlspecialchars($section['course_name']) ?></div>
-                                <div class="section-details">
-                                    <span class="badge badge-info"><?= htmlspecialchars($section['program_code']) ?></span>
-                                    <span class="badge badge-info">Year <?= $section['year_level'] ?></span>
-                                    <span class="badge badge-info">Sem <?= $section['semester'] ?></span>
-                                    <span class="badge badge-info"><?= $section['enrolled_count'] ?>/<?= $section['capacity'] ?> students</span>
+                <?php foreach ($grouped as $programName => $years): ?>
+                    <div class="program-heading" style="text-align:center; font-size:1.25rem; font-weight:800; color:#4b5563; margin:18px 0 8px; border-bottom:2px solid #e5e7eb; padding-bottom:6px;">
+                        <?= htmlspecialchars($programName) ?>
+                    </div>
+                    <?php foreach ($years as $yr => $list): ?>
+                        <?php $ylbl = ((int)$yr===1?'1st':((int)$yr===2?'2nd':((int)$yr===3?'3rd':((int)$yr.'th')))); ?>
+                        <div class="year-heading" style="text-align:center; font-weight:700; color:#6a0dad; margin:8px 0;">
+                            <?= $ylbl ?> Year
+                        </div>
+                        <div class="section-grid">
+                            <?php foreach ($list as $section): ?>
+                                <div class="section-item" data-search="<?= htmlspecialchars(strtolower($section['course_code'].' '.$section['section_code'].' '.$section['course_name'].' '.$section['program_code'].' '.$section['program_name'].' year '.$section['year_level'].' sem '.$section['semester'])) ?>">
+                                    <div class="section-info">
+                                        <h4><?= htmlspecialchars($section['course_code']) ?> - <?= htmlspecialchars($section['section_code']) ?></h4>
+                                        <div><?= htmlspecialchars($section['course_name']) ?></div>
+                                        <div class="section-details">
+                                            <span class="badge badge-info"><?= htmlspecialchars($section['program_code']) ?></span>
+                                            <?php $yl2=(int)$section['year_level']; $ylbl2 = ($yl2===1?'1st':($yl2===2?'2nd':($yl2===3?'3rd':($yl2.'th')))); ?>
+                                            <span class="badge badge-info"><?= $ylbl2 ?> Year</span>
+                                            <span class="badge badge-info">Sem <?= (int)$section['semester'] ?></span>
+                                            <span class="badge badge-info"><?= (int)$section['enrolled_count'] ?>/<?= (int)$section['capacity'] ?> students</span>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-primary btn-small" onclick="openRequestModal(<?= (int)$section['section_id'] ?>, '<?= htmlspecialchars($section['course_code']) ?> - <?= htmlspecialchars($section['section_code']) ?>')">
+                                        Request Section
+                                    </button>
                                 </div>
-                            </div>
-                            <button class="btn btn-primary btn-small" onclick="openRequestModal(<?= $section['section_id'] ?>, '<?= htmlspecialchars($section['course_code']) ?> - <?= htmlspecialchars($section['section_code']) ?>')">
-                                Request Section
-                            </button>
+                            <?php endforeach; ?>
                         </div>
                     <?php endforeach; ?>
-                </div>
+                <?php endforeach; ?>
             <?php else: ?>
                 <div class="empty-state">
                     <div class="empty-state-icon">✅</div>
@@ -494,6 +521,18 @@ $requests = $pendingRequests->fetchAll(PDO::FETCH_ASSOC);
             if (event.target === modal) {
                 closeRequestModal();
             }
+        }
+
+        // Client-side search filter
+        const sectionSearch = document.getElementById('sectionSearch');
+        if (sectionSearch) {
+            sectionSearch.addEventListener('input', function(){
+                const q = this.value.trim().toLowerCase();
+                document.querySelectorAll('.section-item').forEach(el => {
+                    const hay = (el.getAttribute('data-search')||'').toLowerCase();
+                    el.style.display = hay.includes(q) ? '' : 'none';
+                });
+            });
         }
     </script>
 </body>

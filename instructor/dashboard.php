@@ -4,8 +4,34 @@
  * Shows assigned courses and grade management
  */
 
-require_once '../config.php';
+require_once __DIR__ . '/../config.php';
 requireRole('instructor');
+
+// Handle leave section request
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action']==='leave_section') {
+    $instructorId = (int)($_SESSION['user_id'] ?? 0);
+    $sectionId = (int)($_POST['section_id'] ?? 0);
+    if ($instructorId && $sectionId) {
+        try {
+            // Verify mapping exists
+            $chk = $pdo->prepare('SELECT 1 FROM instructor_sections WHERE instructor_id=? AND section_id=?');
+            $chk->execute([$instructorId, $sectionId]);
+            if ($chk->fetch()) {
+                $del = $pdo->prepare('DELETE FROM instructor_sections WHERE instructor_id=? AND section_id=?');
+                $del->execute([$instructorId, $sectionId]);
+                $_SESSION['flash_success'] = 'You have been unassigned from the section.';
+            } else {
+                $_SESSION['flash_error'] = 'You are not assigned to this section.';
+            }
+        } catch (Exception $e) {
+            $_SESSION['flash_error'] = 'Failed to leave section.';
+        }
+    } else {
+        $_SESSION['flash_error'] = 'Invalid request.';
+    }
+    header('Location: '.$_SERVER['REQUEST_URI']);
+    exit;
+}
 
 $instructorId = $_SESSION['user_id'];
 
@@ -353,6 +379,11 @@ $pendingFlags = $stmt->fetch()['count'];
                                 <a href="attendance.php?section_id=<?php echo $section['section_id']; ?>" class="btn btn-secondary">
                                     Attendance
                                 </a>
+                                <form method="POST" style="display:inline-block; margin-left:8px;" onsubmit="return confirm('Are you sure you want to leave this section? You can be re-assigned later by an admin.');">
+                                    <input type="hidden" name="action" value="leave_section">
+                                    <input type="hidden" name="section_id" value="<?php echo (int)$section['section_id']; ?>">
+                                    <button type="submit" class="btn btn-danger">Leave Section</button>
+                                </form>
                             </div>
                         </div>
                     <?php endforeach; ?>

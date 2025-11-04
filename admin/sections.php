@@ -11,6 +11,75 @@ function has_enrollment_section(PDO $pdo): bool {
   return in_array('section_id',$cols,true);
 }
 
+// Action: bulk for active SY + semester, all programs, years 1..3
+if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action']??'')==='bulk_active_all')){
+  try{
+    // Active SY + semester
+    $syRow=$pdo->query("SELECT id, semester FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $syId=(int)($syRow['id']??0); $semester=(int)($syRow['semester']??0);
+    if(!$syId) throw new Exception('No active school year.');
+    if($semester<=0) throw new Exception('Active semester not set on active school year.');
+
+    // Defaults
+    $capacityDefault=30;
+    $created=0; $touched=0; $insCount=0; $updCount=0; $skip=0; $noSec=0; $progTouched=0;
+    // Program list
+    $programsAll=$pdo->query('SELECT id, code FROM programs ORDER BY code')->fetchAll(PDO::FETCH_ASSOC);
+    if(!$programsAll) throw new Exception('No programs found.');
+
+    // Ensure schema niceties once
+    try{$pdo->exec("ALTER TABLE sections MODIFY section_code VARCHAR(50)");}catch(Exception $e){}
+    try{$pdo->exec("ALTER TABLE sections ADD UNIQUE KEY uniq_course_section (course_id, section_code)");}catch(Exception $e){}
+    $hasSec=has_enrollment_section($pdo);
+
+    foreach($programsAll as $pRow){ $program_id=(int)$pRow['id']; $progTouched++;
+      foreach([1,2,3] as $year_level){
+        // Count students
+        $st=$pdo->prepare("SELECT COUNT(*) FROM users WHERE role='student' AND program_id=? AND year_level=? AND (status IS NULL OR status='active')");
+        $st->execute([$program_id,$year_level]);
+        $studentCount=(int)$st->fetchColumn();
+        // Courses for this bucket
+        $cst=$pdo->prepare('SELECT id FROM courses WHERE program_id=? AND year_level=? AND semester=?');
+        $cst->execute([$program_id,$year_level,$semester]);
+        $courses=$cst->fetchAll(PDO::FETCH_COLUMN);
+        if(!$courses) continue;
+        // Auto-create sections as needed
+        $next=function(array $exist,int $i){$n=$i;$code='';while($n>=0){$code=chr(($n%26)+65).$code;$n=intdiv($n,26)-1;} $base=$i;$k=0;while(in_array($code,$exist,true)){$k++;$n=$base+$k;$code='';while($n>=0){$code=chr(($n%26)+65).$code;$n=intdiv($n,26)-1;}}return $code;};
+        $pdo->beginTransaction();
+        try{
+          foreach($courses as $cid){
+            $s=$pdo->prepare('SELECT section_code FROM sections WHERE course_id=? ORDER BY section_code');
+            $s->execute([(int)$cid]);
+            $exist=array_map(fn($r)=>(string)$r['section_code'],$s->fetchAll(PDO::FETCH_ASSOC));
+            $current=count($exist); $need=(int)ceil(($studentCount>0?$studentCount:1)/$capacityDefault); $toCreate=max(0,$need-$current); if($toCreate<=0) continue; $touched++;
+            for($i=0;$i<$toCreate;$i++){
+              $code=$next($exist,$current+$i);
+              $ins=$pdo->prepare("INSERT INTO sections (course_id, section_code, section_name, capacity, enrolled_count, status) VALUES (?,?,?,?,0,'active')");
+              $ins->execute([(int)$cid,$code,$code,$capacityDefault]);
+              $exist[]=$code; $created++;
+            }
+          }
+          $pdo->commit();
+        }catch(Exception $ie){ $pdo->rollBack(); throw $ie; }
+
+        // Enroll all students to those courses and assign to sections
+        // Preload students and courses
+        $students=$pdo->prepare("SELECT id FROM users WHERE role='student' AND program_id=? AND year_level=? AND (status IS NULL OR status='active')");
+        $students->execute([$program_id,$year_level]);
+        $stuIds=$students->fetchAll(PDO::FETCH_COLUMN);
+        if(!$stuIds) continue;
+        $courseIds=$courses;
+        // Available sections per course with occupancy for active SY
+        $avail=[]; foreach($courseIds as $cid){ $q=$pdo->prepare('SELECT id, capacity FROM sections WHERE course_id=? AND status=\'active\' ORDER BY section_code'); $q->execute([(int)$cid]); $rows=$q->fetchAll(PDO::FETCH_ASSOC); $avail[(int)$cid]=[]; foreach($rows as $r){ $occ=$hasSec? (int)$pdo->query("SELECT COUNT(*) FROM enrollments WHERE course_id=".(int)$cid." AND section_id=".(int)$r['id']." AND school_year_id=$syId")->fetchColumn() : 0; $avail[(int)$cid][]= ['id'=>(int)$r['id'],'cap'=>(int)$r['capacity'],'occ'=>$occ]; } }
+        $pick=function(array &$l){ usort($l,fn($a,$b)=>($b['cap']-$b['occ'])<=>($a['cap']-$a['occ']) ?: ($a['occ']<=>$b['occ'])); foreach($l as &$s){ if($s['occ']<$s['cap']){ $s['occ']++; return $s['id']; } } return null; };
+        foreach($stuIds as $uid){ foreach($courseIds as $cid){ $ex=$pdo->prepare('SELECT id, section_id FROM enrollments WHERE student_id=? AND course_id=? AND school_year_id=? LIMIT 1'); $ex->execute([(int)$uid,(int)$cid,$syId]); $er=$ex->fetch(PDO::FETCH_ASSOC); $sec=null; if(!empty($avail[(int)$cid])) $sec=$pick($avail[(int)$cid]); if($sec===null){$noSec++; continue;} if($er){ if($hasSec && empty($er['section_id'])){ $u=$pdo->prepare('UPDATE enrollments SET section_id=? WHERE id=? AND section_id IS NULL'); $u->execute([(int)$sec,(int)$er['id']]); if($u->rowCount()>0){ $updCount++; $pdo->prepare('UPDATE sections SET enrolled_count = enrolled_count + 1 WHERE id=?')->execute([(int)$sec]); } else {$skip++;} } else {$skip++;} continue; } if($hasSec){ $i=$pdo->prepare('INSERT INTO enrollments (student_id,course_id,school_year_id,section_id,status) VALUES (?,?,?,?,\'enrolled\')'); $i->execute([(int)$uid,(int)$cid,$syId,(int)$sec]); } else { $i=$pdo->prepare('INSERT INTO enrollments (student_id,course_id,school_year_id,status) VALUES (?,?,?,\'enrolled\')'); $i->execute([(int)$uid,(int)$cid,$syId]); } if($i->rowCount()>0){ $insCount++; if($hasSec){ $pdo->prepare('UPDATE sections SET enrolled_count=enrolled_count+1 WHERE id=?')->execute([(int)$sec]); } } } }
+      }
+    }
+
+    $msg = "Bulk (active SY/Sem) — Created $created section(s) across $touched course(s); Enrollments: inserted $insCount, updated $updCount, skipped $skip, no-section $noSec across $progTouched program(s).";
+  }catch(Exception $e){ $error = $e->getMessage(); }
+}
+
 // Actions: auto-create sections
 if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action']??'')==='auto_sections')){
   try{
@@ -133,6 +202,14 @@ foreach($sections as $s){
       <!-- Tools -->
       <div class="card" style="margin-bottom:16px;">
         <h3>Tools</h3>
+        <div class="alert" style="background:#f8fafc; border:1px solid #e5e7eb; color:#334155; margin-bottom:12px;">
+          This tool will use the Active School Year and its Semester automatically.
+        </div>
+        <!-- One-click bulk for active SY/Sem -->
+        <form method="POST" style="margin-bottom:18px; display:flex; gap:10px; align-items:center;" onsubmit="return confirm('Run for Active School Year and Semester across ALL programs and years 1–3?');">
+          <input type="hidden" name="action" value="bulk_active_all">
+          <button class="btn" type="submit">Run for Active SY & Semester — All Programs, Years 1–3</button>
+        </form>
         
         <!-- Auto-Create Sections -->
         <h4>Auto-Create Sections</h4>

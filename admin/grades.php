@@ -10,7 +10,7 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     $activeSY = $pdo->query("SELECT id, year, semester FROM school_years WHERE status = 'active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
     $syId = $activeSY['id'] ?? 0;
 
-    // Pull graded rows for this student (with item max for completeness calc)
+    // Pull graded rows for this student (with item max for completeness calc) — all courses
     $stmt = $pdo->prepare("SELECT c.id as course_id, c.course_code, c.course_name, ac.period, ai.total_score, g.grade
         FROM grades g
         INNER JOIN assessment_items ai ON g.assessment_id = ai.id
@@ -18,12 +18,8 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         INNER JOIN enrollments e ON g.enrollment_id = e.id
         INNER JOIN courses c ON e.course_id = c.id
         WHERE e.student_id = ? AND e.school_year_id = ?
-          AND EXISTS (
-              SELECT 1 FROM course_grade_submissions s
-              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
-          )
         ORDER BY c.course_code, FIELD(ac.period,'prelim','midterm','finals')");
-    $stmt->execute([$sid, $syId, $syId]);
+    $stmt->execute([$sid, $syId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // All enrolled courses for this student (ensure rows even without grades)
@@ -31,13 +27,14 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         FROM enrollments e
         INNER JOIN courses c ON e.course_id = c.id
         WHERE e.student_id = ? AND e.school_year_id = ?
-          AND EXISTS (
-              SELECT 1 FROM course_grade_submissions s
-              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
-          )
         ORDER BY c.course_code");
-    $cstmt->execute([$sid, $syId, $syId]);
+    $cstmt->execute([$sid, $syId]);
     $enrolledCourses = $cstmt->fetchAll(PDO::FETCH_ASSOC);
+    // Courses with a submission this school year (or null sy for legacy)
+    $subStmt = $pdo->prepare("SELECT course_id FROM course_grade_submissions WHERE (school_year_id = ? OR school_year_id IS NULL)");
+    $subStmt->execute([$syId]);
+    $submittedCourses = array_map('intval', $subStmt->fetchAll(PDO::FETCH_COLUMN));
+    $isSubmitted = array_flip($submittedCourses);
     // Fetch total possible per course per period for completeness
     $ps = $pdo->prepare("SELECT c.id as course_id, ac.period, SUM(ai.total_score) as possible
         FROM assessment_items ai
@@ -46,12 +43,8 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         WHERE c.id IN (
             SELECT e.course_id FROM enrollments e WHERE e.student_id = ? AND e.school_year_id = ?
         )
-          AND EXISTS (
-              SELECT 1 FROM course_grade_submissions s
-              WHERE s.course_id = c.id AND (s.school_year_id = ? OR s.school_year_id IS NULL)
-          )
         GROUP BY c.id, ac.period");
-    $ps->execute([$sid, $syId, $syId]);
+    $ps->execute([$sid, $syId]);
     $possibleMap = [];
     foreach ($ps->fetchAll(PDO::FETCH_ASSOC) as $p) { $possibleMap[$p['course_id']][strtolower($p['period'])] = floatval($p['possible']); }
 
@@ -87,17 +80,24 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
         $pPct = ($pPos>0) ? min(99, ($pSum/$pPos)*100.0) : null; $pComplete = ($pPos>0 && $pSub >= $pPos);
         $mPct = ($mPos>0) ? min(99, ($mSum/$mPos)*100.0) : null; $mComplete = ($mPos>0 && $mSub >= $mPos);
         $fPct = ($fPos>0) ? min(99, ($fSum/$fPos)*100.0) : null; $fComplete = ($fPos>0 && $fSub >= $fPos);
+        $submitted = isset($isSubmitted[$cid]);
         $haveAny = ($pPct !== null) || ($mPct !== null) || ($fPct !== null);
         $tent = $haveAny ? min(99, ((($pPct??0)*30 + ($mPct??0)*30 + ($fPct??0)*40) / 100.0)) : null;
         $hasBlank = !$pComplete || !$mComplete || !$fComplete;
-        // Remarks: blank if incomplete or has blanks; only show Passed/Failed when complete
+        // If not submitted, force blank grade display
+        if (!$submitted) { $tent = null; $hasBlank = true; }
+        // Remarks and status
         $remarks = '';
-        if ($tent !== null && !$hasBlank) { $remarks = ($tent >= 75) ? 'Passed' : 'Failed'; }
-        // Status: blank unless complete
+        if ($submitted && $tent !== null && !$hasBlank) { $remarks = ($tent >= 75) ? 'Passed' : 'Failed'; }
         $hasPeriods = ($pPos>0) || ($mPos>0) || ($fPos>0);
-        if (!$hasPeriods || ($pSub+$mSub+$fSub) <= 0 || $hasBlank) { $status=''; $statusCls=''; }
+        if (!$submitted) { $status='Not Submitted'; $statusCls=''; }
+        elseif (!$hasPeriods || ($pSub+$mSub+$fSub) <= 0 || $hasBlank) { $status='Incomplete'; $statusCls='text-secondary'; }
         else { $status='Complete'; $statusCls='text-success'; }
-        $finals[] = ['code'=>$cinfo['course_code'], 'name'=>$cinfo['course_name'], 'grade'=>$tent, 'remarks'=>$remarks, 'status'=>$status, 'status_cls'=>$statusCls];
+        $finals[] = [
+            'course_id'=>$cid,
+            'code'=>$cinfo['course_code'], 'name'=>$cinfo['course_name'],
+            'grade'=>$tent, 'remarks'=>$remarks, 'status'=>$status, 'status_cls'=>$statusCls
+        ];
     }
 
     if (empty($finals)) { echo '<div style="padding:16px; color:#666;">No grades found for the active term.</div>'; exit; }
@@ -162,7 +162,7 @@ if (isset($_GET['ajax']) && isset($_GET['action']) && $_GET['action'] === 'stude
     }
     $avgLee = $countLee ? ($sumLee / $countLee) : null;
     echo '<tr>';
-    echo '<td colspan="4" style="text-align:right; font-weight:700;">Average Final Rating</td>';
+    echo '<td colspan="5" style="text-align:right; font-weight:700;">Average Final Rating</td>';
     echo '<td style="text-align:center; font-weight:700;">' . ($avgLee===null ? '' : htmlspecialchars(number_format($avgLee,2))) . '</td>';
     echo '</tr>';
     echo '</tbody></table>';
@@ -202,6 +202,7 @@ if (in_array('first_name', $userCols) && in_array('last_name', $userCols)) {
 } elseif (in_array('name', $userCols)) {
     $studentSelect[] = 'name';
 }
+$hasYearCol = in_array('year_level', $userCols);
 $studentOrder = (in_array('last_name', $userCols) && in_array('first_name', $userCols)) ? 'last_name, first_name' : 'id';
 // Only needed if we still expose a dropdown; replaced by search bar below
 $students = [];
@@ -225,12 +226,12 @@ $query = "
     SELECT
         u_student.id as student_id,
         u_student.student_id as student_number,
-        $studentNameExpr,
-        c.id as course_id,
+        $studentNameExpr
+        , c.id as course_id,
         c.course_code,
         c.course_name,
         c.program_id,
-        p.name as program_name,
+        p.name as program_name" . ($hasYearCol ? ", u_student.year_level as year_level" : "") . ",
         ROUND(AVG(g.grade),2) as average_raw
     FROM enrollments e
     INNER JOIN users u_student ON e.student_id = u_student.id
@@ -267,19 +268,20 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $studentCourseAverages = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Group rows by program, then unique students per program with a count indicator
+// Group rows by program, then by year (1..3), maintaining unique students per (program, year)
 $programGroups = [];
 foreach ($studentCourseAverages as $r) {
     $pid = isset($r['program_id']) ? (int)$r['program_id'] : 0;
     $pname = $r['program_name'] ?? 'Unassigned Program';
     if (!isset($programGroups[$pid])) {
-        $programGroups[$pid] = ['name' => $pname, 'students' => []];
+        $programGroups[$pid] = ['name' => $pname, 'years' => [1=>[],2=>[],3=>[]]];
     }
+    $year = $hasYearCol ? (int)($r['year_level'] ?? 0) : 0;
+    if ($year < 1 || $year > 3) { $year = 1; }
     $sid = (int)$r['student_id'];
-    if (!isset($programGroups[$pid]['students'][$sid])) {
-        $programGroups[$pid]['students'][$sid] = ['row' => $r, 'count' => 0];
+    if (!isset($programGroups[$pid]['years'][$year][$sid])) {
+        $programGroups[$pid]['years'][$year][$sid] = ['row' => $r];
     }
-    $programGroups[$pid]['students'][$sid]['count']++;
 }
 
 ?>
@@ -348,47 +350,51 @@ foreach ($studentCourseAverages as $r) {
                     <?php else: ?>
                         <div class="table-responsive">
                             <?php foreach ($programGroups as $pg): ?>
-                                <h4 style="margin:10px 0; font-weight:700;">
+                                <div class="program-heading">
                                     <?php echo htmlspecialchars($pg['name']); ?>
-                                </h4>
-                                <table class="grades-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Student</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($pg['students'] as $sid => $info): $row = $info['row']; ?>
+                                </div>
+                                <?php foreach ([1=>'1st Year',2=>'2nd Year',3=>'3rd Year'] as $yrNum => $yrLabel): ?>
+                                    <?php $studentsByYear = $pg['years'][$yrNum] ?? []; if (empty($studentsByYear)) continue; ?>
+                                    <div class="year-heading"><?php echo $yrLabel; ?></div>
+                                    <table class="grades-table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong>
-                                                    <?php
-                                                    if (isset($row['student_first']) && isset($row['student_last'])) {
-                                                        echo htmlspecialchars($row['student_last'] . ', ' . $row['student_first']);
-                                                    } elseif (isset($row['student_name'])) {
-                                                        echo htmlspecialchars($row['student_name']);
-                                                    } else {
-                                                        echo htmlspecialchars($row['student_number']);
-                                                    }
-                                                    ?>
-                                                    </strong>
-                                                </td>
-                                                <td class="actions">
-                                                    <button type="button" class="btn btn-modern btn-view text-decoration-none" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">
-                                                        <span class="icon" aria-hidden="true">👁️</span>
-                                                        <span>View Grades</span>
-                                                    </button>
-                                                    <a class="btn btn-modern btn-print text-decoration-none" href="print_grades_pdf.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank" rel="noopener">
-                                                        <span class="icon" aria-hidden="true">🖨️</span>
-                                                        <span>Print Grades</span>
-                                                    </a>
-                                                </td>
+                                                <th>Student</th>
+                                                <th>Actions</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                                <div style="height:12px"></div>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($studentsByYear as $sid => $info): $row = $info['row']; ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong>
+                                                        <?php
+                                                        if (isset($row['student_first']) && isset($row['student_last'])) {
+                                                            echo htmlspecialchars($row['student_last'] . ', ' . $row['student_first']);
+                                                        } elseif (isset($row['student_name'])) {
+                                                            echo htmlspecialchars($row['student_name']);
+                                                        } else {
+                                                            echo htmlspecialchars($row['student_number']);
+                                                        }
+                                                        ?>
+                                                        </strong>
+                                                    </td>
+                                                    <td class="actions">
+                                                        <button type="button" class="btn btn-modern btn-view text-decoration-none" data-student-id="<?php echo (int)$row['student_id']; ?>" onclick="openGradesModal(<?php echo (int)$row['student_id']; ?>)">
+                                                            <span class="icon" aria-hidden="true">👁️</span>
+                                                            <span>View Grades</span>
+                                                        </button>
+                                                        <a class="btn btn-modern btn-print text-decoration-none" href="print_grades_pdf.php?student_id=<?php echo (int)$row['student_id']; ?>" target="_blank" rel="noopener">
+                                                            <span class="icon" aria-hidden="true">🖨️</span>
+                                                            <span>Print Grades</span>
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                    <div style="height:12px"></div>
+                                <?php endforeach; ?>
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
@@ -519,6 +525,31 @@ foreach ($studentCourseAverages as $r) {
 
         .grades-table tr:hover {
             background: #f8f9fa;
+        }
+
+        /* Big, centered year headings for Grade Records */
+        .year-heading {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: #6a0dad;
+            margin: 16px 0 10px;
+            padding: 6px 0;
+            border-top: 2px solid #e5e7eb;
+            border-bottom: 2px solid #e5e7eb;
+            letter-spacing: 0.3px;
+        }
+
+        /* Big, centered program headings for Grade Records */
+        .program-heading {
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 900;
+            color: #4b5563;
+            margin: 22px 0 12px;
+            padding: 8px 0 4px;
+            border-bottom: 3px solid #e5e7eb;
+            letter-spacing: 0.4px;
         }
 
         .grade-value {
