@@ -83,8 +83,8 @@ if ($isAjax && $_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['grades_json
 // Save via normal form submit
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['submit_grades']) && isset($_POST['grades']) && is_array($_POST['grades'])) {
     $res = processGrades($pdo, $_POST['grades'], $section);
-    if ($res['success']) { $_SESSION['flash_success'] = 'Grades submitted successfully!'; }
-    else { $_SESSION['flash_error'] = 'Failed to submit grades: '.$res['message']; }
+    if ($res['success']) { $_SESSION['flash_success'] = 'Grades saved successfully.'; }
+    else { $_SESSION['flash_error'] = 'Failed to save grades: '.$res['message']; }
     header('Location: ' . $_SERVER['REQUEST_URI']);
     exit;
 }
@@ -101,14 +101,49 @@ $stmt = $pdo->prepare(
 $stmt->execute([$sectionId]);
 $assessments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Students by course
-$stmt = $pdo->prepare(
-    "SELECT e.id AS enrollment_id, u.id AS student_id, u.student_id AS student_number, u.first_name, u.last_name, u.email
-     FROM enrollments e INNER JOIN users u ON e.student_id=u.id
-     WHERE e.course_id=? AND e.status='enrolled'
-     ORDER BY u.last_name, u.first_name"
-);
-$stmt->execute([$section['course_id']]);
+$enCols = [];
+try { $enCols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $enCols = []; }
+$hasSecCol = in_array('section_id', $enCols, true);
+$hasSyCol  = in_array('school_year_id', $enCols, true);
+$syRow = $pdo->query("SELECT id FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+$activeSyId = isset($syRow['id']) ? (int)$syRow['id'] : null;
+if ($hasSecCol) {
+    if ($hasSyCol && $activeSyId) {
+        $stmt = $pdo->prepare(
+            "SELECT e.id AS enrollment_id, u.id AS student_id, u.student_id AS student_number, u.first_name, u.last_name, u.email
+             FROM enrollments e INNER JOIN users u ON e.student_id=u.id
+             WHERE e.section_id=? AND e.status='enrolled' AND e.school_year_id = ?
+             ORDER BY u.last_name, u.first_name"
+        );
+        $stmt->execute([$sectionId, $activeSyId]);
+    } else {
+        $stmt = $pdo->prepare(
+            "SELECT e.id AS enrollment_id, u.id AS student_id, u.student_id AS student_number, u.first_name, u.last_name, u.email
+             FROM enrollments e INNER JOIN users u ON e.student_id=u.id
+             WHERE e.section_id=? AND e.status='enrolled'
+             ORDER BY u.last_name, u.first_name"
+        );
+        $stmt->execute([$sectionId]);
+    }
+} else {
+    if ($hasSyCol && $activeSyId) {
+        $stmt = $pdo->prepare(
+            "SELECT e.id AS enrollment_id, u.id AS student_id, u.student_id AS student_number, u.first_name, u.last_name, u.email
+             FROM enrollments e INNER JOIN users u ON e.student_id=u.id
+             WHERE e.course_id=? AND e.status='enrolled' AND e.school_year_id = ?
+             ORDER BY u.last_name, u.first_name"
+        );
+        $stmt->execute([$section['course_id'], $activeSyId]);
+    } else {
+        $stmt = $pdo->prepare(
+            "SELECT e.id AS enrollment_id, u.id AS student_id, u.student_id AS student_number, u.first_name, u.last_name, u.email
+             FROM enrollments e INNER JOIN users u ON e.student_id=u.id
+             WHERE e.course_id=? AND e.status='enrolled'
+             ORDER BY u.last_name, u.first_name"
+        );
+        $stmt->execute([$section['course_id']]);
+    }
+}
 $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Existing grades
@@ -359,6 +394,7 @@ $periodKeys = array_keys($grouped);
                     <table class="grades grades-period-table" id="gradesTable-<?php echo htmlspecialchars($pname); ?>">
                         <thead>
                         <tr>
+                            <th rowspan="3" style="width:48px;">No.</th>
                             <th rowspan="3">Student</th>
                             <th colspan="<?php echo count($periodAssessments)+1; ?>"><?php echo htmlspecialchars(ucfirst($pname)); ?> <br><small class="small"><?php echo number_format($pdata['period_percentage'],2); ?>%</small></th>
                             <th rowspan="3">Grade</th>
@@ -378,8 +414,9 @@ $periodKeys = array_keys($grouped);
                         </tr>
                         </thead>
                         <tbody>
-                        <?php foreach ($students as $student): $enroll=(int)$student['enrollment_id']; ?>
+                        <?php foreach ($students as $i=>$student): $enroll=(int)$student['enrollment_id']; ?>
                             <tr data-enrollment-id="<?php echo $enroll; ?>">
+                                <td style="text-align:center;">&nbsp;<?php echo $i+1; ?></td>
                                 <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'].', '.$student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
                                 <?php foreach ($periodAssessments as $a): $aid=(int)$a['id']; $existing = $grades[$enroll][$aid] ?? null; ?>
                                     <td>
@@ -405,6 +442,7 @@ $periodKeys = array_keys($grouped);
                     <table class="grades grades-period-table" id="gradesTable-final">
                         <thead>
                         <tr>
+                            <th style="width:48px;">No.</th>
                             <th>Student</th>
                             <th>Prelim (%)</th>
                             <th>Midterm (%)</th>
@@ -415,7 +453,7 @@ $periodKeys = array_keys($grouped);
                         </tr>
                         </thead>
                         <tbody>
-                        <?php foreach ($students as $student): $enroll=(int)$student['enrollment_id']; ?>
+                        <?php foreach ($students as $i=>$student): $enroll=(int)$student['enrollment_id']; ?>
                             <?php
                             $calc = function($per) use ($periodMeta, $assessments, $grades, $enroll){
                                 $possible = (float)($periodMeta[$per]['possible'] ?? 0.0);
@@ -445,6 +483,7 @@ $periodKeys = array_keys($grouped);
                             $leeFinal = $cum===null ? null : lee_from_percent($cum);
                             ?>
                             <tr data-enrollment-id="<?php echo $enroll; ?>">
+                                <td style="text-align:center;">&nbsp;<?php echo $i+1; ?></td>
                                 <td style="min-width:220px;"><strong><?php echo htmlspecialchars($student['last_name'].', '.$student['first_name']); ?></strong><br><small class="small"><?php echo htmlspecialchars($student['student_number']); ?></small></td>
                                 <td class="prelim-cell"><?php echo $p===null?'':number_format($p,2); ?></td>
                                 <td class="midterm-cell"><?php echo $m===null?'':number_format($m,2); ?></td>
@@ -461,8 +500,22 @@ $periodKeys = array_keys($grouped);
                 <div class="controls">
                     <button type="submit" name="submit_grades" value="1" id="saveBtn" class="btn primary">Save All Grades</button>
                     <button type="button" id="resetBtn" class="btn ghost">Reset</button>
-                    <button type="button" class="btn ghost" onclick="window.print()">Print</button>
+                    <button type="button" id="printOptionsBtn" class="btn ghost">Print</button>
                     <button type="button" id="sendToAdminBtn" class="btn btn-secondary">Send to Admin</button>
+                </div>
+                <div id="printModal" style="position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:1000;" onclick="if(event.target===this) closePrintModal();">
+                    <div style="background:#fff; padding:16px; border-radius:8px; min-width:280px; max-width:90%; box-shadow:0 10px 30px rgba(0,0,0,.2);">
+                        <div style="font-weight:700; margin-bottom:10px;">Print Options</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                            <button type="button" class="btn ghost" onclick="window.open('print_period_grades.php?section_id=<?php echo (int)$sectionId; ?>&period=prelim','_blank')">Prelim</button>
+                            <button type="button" class="btn ghost" onclick="window.open('print_period_grades.php?section_id=<?php echo (int)$sectionId; ?>&period=midterm','_blank')">Midterm</button>
+                            <button type="button" class="btn ghost" onclick="window.open('print_period_grades.php?section_id=<?php echo (int)$sectionId; ?>&period=finals','_blank')">Finals</button>
+                            <button type="button" class="btn ghost" onclick="showPeriod('final-result'); closePrintModal(); setTimeout(function(){ window.print(); }, 300);">Final Result</button>
+                        </div>
+                        <div style="margin-top:12px; text-align:right;">
+                            <button type="button" class="btn ghost" onclick="closePrintModal()">Close</button>
+                        </div>
+                    </div>
                 </div>
                 <div id="ajaxMessage" style="margin-top:12px; display:none;"></div>
             </form>
@@ -477,6 +530,9 @@ const periodMeta = <?php echo json_encode($periodMeta); ?>;
 const assessIndex = <?php echo json_encode($assessIndex); ?>;
 const groupedMeta = <?php echo json_encode($grouped); ?>;
 
+function openPrintModal(){ const m=document.getElementById('printModal'); if(m){ m.style.display='flex'; } }
+function closePrintModal(){ const m=document.getElementById('printModal'); if(m){ m.style.display='none'; } }
+
 function showPeriod(p){
   qsa('.period-table-wrap').forEach(div=>{div.style.display = (div.getAttribute('data-period')===p)?'':'none'; div.classList.toggle('active', div.getAttribute('data-period')===p)})
   qsa('.period-tab').forEach(btn=>{if(btn.getAttribute('data-show-period')===p){btn.classList.remove('ghost');btn.classList.add('primary')}else{btn.classList.add('ghost');btn.classList.remove('primary')}})
@@ -488,6 +544,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // default: first tab active; hide sendToAdmin
   const sendBtn = qs('#sendToAdminBtn'); if (sendBtn) sendBtn.style.display='none';
   recalcAll();
+  const pbtn = qs('#printOptionsBtn'); if (pbtn) { pbtn.addEventListener('click', openPrintModal); }
 });
 
 function validateAll(){

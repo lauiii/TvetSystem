@@ -67,10 +67,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
     }
 }
 
-// Resolve active school year and semester from school_years.semester (fallback to 1)
-$syRow = $pdo->query("SELECT id, semester FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+// Resolve active school year and semester (schema-adaptive: use active_semester when available; fallback to semester or 1)
+$syRow = $pdo->query("\n    SELECT \n        id,\n        year,\n        CASE \n            WHEN EXISTS(\n                SELECT 1 FROM information_schema.COLUMNS \n                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'school_years' AND COLUMN_NAME = 'active_semester'\n            ) THEN active_semester\n            ELSE COALESCE(semester, 1)\n        END AS active_semester\n    FROM school_years\n    WHERE status='active'\n    ORDER BY id DESC\n    LIMIT 1\n")->fetch(PDO::FETCH_ASSOC);
 $activeSyId = $syRow['id'] ?? null;
-$activeSemester = (int)($syRow['semester'] ?? 1);
+$activeYear = $syRow['year'] ?? null;
+$activeSemester = (int)($syRow['active_semester'] ?? 1);
 
 // Check if enrollments has school_year_id for filtering
 $enrCols = [];
@@ -86,7 +87,7 @@ $sql = "
         c.semester,
         c.year_level,
         e.status as enrollment_status,
-        COUNT(DISTINCT g.id) as graded_assessments,
+        COUNT(DISTINCT CASE WHEN (g.grade IS NOT NULL OR g.status = 'complete') THEN g.id END) as graded_assessments,
         COUNT(DISTINCT ai.id) as total_assessments,
         SUM(CASE WHEN g.status = 'missing' THEN 1 ELSE 0 END) as missing_count,
         AVG(CASE WHEN g.grade IS NOT NULL THEN g.grade ELSE NULL END) as average_grade
@@ -144,6 +145,49 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
     } else {
         return ['status' => 'Not Graded', 'class' => 'status-incomplete'];
     }
+}
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'scores') {
+    header('Content-Type: application/json');
+    $courseId = isset($_GET['course_id']) ? (int)$_GET['course_id'] : null;
+    if (!$courseId) { echo json_encode(['error' => 'course_id required']); exit; }
+    $sql = "
+        SELECT c.id AS course_id, c.course_name, c.course_code,
+               ac.period, ai.id AS assessment_id, ai.name AS assessment_name, ai.total_score,
+               g.grade, g.status
+        FROM enrollments e
+        INNER JOIN courses c ON e.course_id = c.id
+        LEFT JOIN assessment_criteria ac ON ac.course_id = c.id
+        LEFT JOIN assessment_items ai ON ai.criteria_id = ac.id
+        LEFT JOIN grades g ON g.assessment_id = ai.id AND g.enrollment_id = e.id
+        WHERE e.student_id = ? AND e.status = 'enrolled' AND c.id = ?" .
+        ($hasSyCol && $activeSyId ? " AND e.school_year_id = ?" : "") .
+        " ORDER BY ac.period, ai.name";
+    $params = [$studentId, $courseId];
+    if ($hasSyCol && $activeSyId) { $params[] = $activeSyId; }
+    $st = $pdo->prepare($sql);
+    $st->execute($params);
+    $out = [ 'course' => null, 'items' => [] ];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        if (!$out['course']) {
+            $out['course'] = [
+                'id' => (int)$r['course_id'],
+                'name' => (string)($r['course_name'] ?? ''),
+                'code' => (string)($r['course_code'] ?? ''),
+            ];
+        }
+        if ($r['assessment_id']) {
+            $out['items'][] = [
+                'id' => (int)$r['assessment_id'],
+                'name' => $r['assessment_name'],
+                'period' => $r['period'] ?? null,
+                'total_score' => $r['total_score'] !== null ? (float)$r['total_score'] : null,
+                'grade' => $r['grade'] !== null ? (float)$r['grade'] : null,
+                'status' => $r['status'] ?? null
+            ];
+        }
+    }
+    echo json_encode($out);
+    exit;
 }
 ?>
 <!DOCTYPE html>
@@ -407,7 +451,7 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
                 <?php $ord = [1=>'1st',2=>'2nd',3=>'3rd',4=>'4th']; $yl = (int)($student['year_level'] ?? 0); ?>
                 <h1>Welcome, <?php echo htmlspecialchars($_SESSION['name']); ?>!</h1>
                 <p>
-                    <?php echo htmlspecialchars($student['program_name'] ?? ''); ?> • Year Level: <?php echo $yl>0 ? $ord[$yl] ?? $yl.'th' : 'N/A'; ?> • Active Semester: <?php echo ($activeSemester===1?'1st':($activeSemester===2?'2nd':'Summer')); ?>
+                    <?php echo htmlspecialchars($student['program_name'] ?? ''); ?> • Year Level: <?php echo $yl>0 ? $ord[$yl] ?? $yl.'th' : 'N/A'; ?> • Active School Year: <?php echo htmlspecialchars($activeYear ?? 'N/A'); ?> • Active Semester: <?php echo ($activeSemester===1?'1st':($activeSemester===2?'2nd':'Summer')); ?>
                 </p>
             </div>
             <?php require_once __DIR__.'/../include/functions.php'; $unread = get_unread_count($pdo, (int)$_SESSION['user_id']); ?>
@@ -496,7 +540,7 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
                                     <th style="text-align:left;padding:10px;border-bottom:1px solid #eee;">Course</th>
                                     <th style="text-align:left;padding:10px;border-bottom:1px solid #eee;">Year Level</th>
                                     <th style="text-align:left;padding:10px;border-bottom:1px solid #eee;">Status</th>
-                                    <th style="text-align:left;padding:10px;border-bottom:1px solid #eee;">Progress</th>
+                                    <th style="text-align:left;padding:10px;border-bottom:1px solid #eee;">Scores</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -516,8 +560,8 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
                                                 <?php echo $status['status']; ?>
                                             </span>
                                         </td>
-                                        <td style="padding:10px;border-bottom:1px solid #f3f3f3; font-size:13px; color:#555;">
-                                            Graded: <?php echo (int)$course['graded_assessments']; ?>/<?php echo (int)$course['total_assessments']; ?>
+                                        <td style="padding:10px;border-bottom:1px solid #f3f3f3;">
+                                            <button type="button" class="btn-logout view-scores" style="background:#6a0dad;" data-score-course="<?php echo (int)$course['course_id']; ?>" data-score-coursename="<?php echo htmlspecialchars($course['course_name']); ?>" data-score-coursecode="<?php echo htmlspecialchars($course['course_code']); ?>">View Scores</button>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -561,6 +605,22 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
                 </form>
             </div>
         </div>
+
+        <!-- Scores Modal -->
+        <div id="scoresModal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="scoresTitle">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="scoresTitle">Scores</h3>
+                    <span class="close" id="scoresClose" aria-label="Close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div id="scoresBody" style="min-height:80px;">Loading...</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-logout" id="scoresCancel" style="background:#6b7280;">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
 <script>
 (function(){
@@ -578,6 +638,58 @@ function getGradeStatus($gradedCount, $totalCount, $missingCount) {
   // Re-open modal after submission to show messages
   open();
   <?php endif; ?>
+})();
+
+(function(){
+  const modal = document.getElementById('scoresModal');
+  const body = document.getElementById('scoresBody');
+  const title = document.getElementById('scoresTitle');
+  const closeBtn = document.getElementById('scoresClose');
+  const cancelBtn = document.getElementById('scoresCancel');
+  let interval = null;
+  function open(){ modal.classList.add('show'); modal.setAttribute('aria-hidden','false'); }
+  function close(){ modal.classList.remove('show'); modal.setAttribute('aria-hidden','true'); if (interval) { clearInterval(interval); interval = null; } }
+  function escapeHtml(s){ const d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
+  async function fetchScores(cid){
+    const res = await fetch('dashboard.php?ajax=scores&course_id='+encodeURIComponent(cid), {cache:'no-store'});
+    return res.ok ? res.json() : { items: [] };
+  }
+  function render(data){
+    if (!data || !Array.isArray(data.items) || data.items.length===0) { body.innerHTML = '<div style="color:#666;">No assessments yet.</div>'; return; }
+    // group by period if present
+    const groups = {};
+    for (const it of data.items){ const p = (it.period||'').toString().toLowerCase() || 'assessments'; if (!groups[p]) groups[p]=[]; groups[p].push(it); }
+    let html = '';
+    for (const [p, items] of Object.entries(groups)){
+      const label = p==='prelim'?'Prelim':(p==='midterm'?'Midterm':(p==='finals'?'Finals':'Assessments'));
+      html += '<div style="margin:8px 0 4px;font-weight:700;color:#6a0dad;">'+escapeHtml(label)+'</div>';
+      html += '<ul style="list-style:none;padding:0;margin:0 0 8px 0;">';
+      for (const it of items){
+        const grade = (it.grade!==null && it.grade!==undefined) ? it.grade : '-';
+        const total = (it.total_score!==null && it.total_score!==undefined) ? it.total_score : '-';
+        const st = it.status ? ' ('+escapeHtml(it.status)+')' : '';
+        html += '<li style="padding:6px 0;border-bottom:1px solid #eee;"><strong>'+escapeHtml(it.name)+'</strong> — '+escapeHtml(grade)+' / '+escapeHtml(total)+st+'</li>';
+      }
+      html += '</ul>';
+    }
+    body.innerHTML = html;
+  }
+  function showScores(btn){
+    const cid = btn.getAttribute('data-score-course');
+    const nm = btn.getAttribute('data-score-coursename') || '';
+    const cc = btn.getAttribute('data-score-coursecode') || '';
+    title.textContent = 'Scores — '+(cc? (cc+' — '):'')+nm;
+    body.innerHTML = 'Loading...';
+    open();
+    fetchScores(cid).then(render);
+    interval = setInterval(()=>{ fetchScores(cid).then(render); }, 30000);
+  }
+  document.querySelectorAll('.view-scores').forEach(btn=>{
+    btn.addEventListener('click', ()=>showScores(btn));
+  });
+  if (closeBtn) closeBtn.addEventListener('click', close);
+  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  window.addEventListener('click', function(e){ if (e.target === modal) close(); });
 })();
 </script>
 </body>

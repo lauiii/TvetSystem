@@ -133,21 +133,29 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
 
             // Content
             $mail->isHTML(true);
-            $mail->Subject = 'Your College Grading System Account';
+            $subject = 'Your Student Account Has Been Created';
+            $mail->Subject = $subject;
 
-            $mail->Body = "<html><body>" .
-                "<h2>Welcome to " . SITE_NAME . "</h2>" .
-                "<p>Hello " . htmlspecialchars($firstName) . ",</p>" .
-                "<p>Your account has been created. Credentials below:</p>" .
-                "<p><strong>Student ID:</strong> " . htmlspecialchars($studentID) . "</p>" .
-                "<p><strong>Email:</strong> " . htmlspecialchars($email) . "</p>" .
-                "<p><strong>Password:</strong> " . htmlspecialchars($password) . "</p>" .
-                "<p><a href='" . SITE_URL . "/login.php'>Login to your account</a></p>" .
-                "</body></html>";
+            $body = '<p>Hello ' . htmlspecialchars($firstName) . ',</p>'
+                  . '<p>Your student account has been created.</p>'
+                  . '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#f9fafb;margin:12px 0;line-height:1.5;">'
+                  . '<div><strong>Username:</strong> ' . htmlspecialchars($email) . '</div>'
+                  . '<div><strong>Student ID:</strong> ' . htmlspecialchars($studentID) . '</div>'
+                  . '<div><strong>Temporary password:</strong> ' . htmlspecialchars($password) . '</div>'
+                  . '</div>'
+                  . '<p>For security, this temporary password will expire in 24 hours. Please log in and change your password immediately.</p>'
+                  . '<p><a href="' . htmlspecialchars(SITE_URL . '/login.php') . '" style="display:inline-block;padding:10px 14px;background:#6a0dad;color:#fff;text-decoration:none;border-radius:6px;">Login to your account</a></p>'
+                  . '<p style="color:#64748b;font-size:12px;">If the button does not work, copy and paste this URL into your browser: ' . htmlspecialchars(SITE_URL . '/login.php') . '</p>'
+                  . '<p>Thank you,<br>TVET Department — Andres Soriano Colleges of Bislig</p>';
 
-            $mail->AltBody = "Welcome to " . SITE_NAME . "\n\n" .
-                "Student ID: $studentID\nEmail: $email\nPassword: $password\n\n" .
-                "Please log in at: " . SITE_URL . "/login.php";
+            $mail->Body = renderEmailTemplate($subject, $body);
+            $mail->AltBody = "Hello {$firstName},\n\n"
+                . "Your student account has been created.\n\n"
+                . "Username: {$email}\n"
+                . "Student ID: {$studentID}\n"
+                . "Temporary password: {$password}\n\n"
+                . "For security, this temporary password will expire in 24 hours. Please log in at " . SITE_URL . "/login.php and change your password immediately.\n\n"
+                . "Thank you,\nTVET Department — Andres Soriano Colleges of Bislig";
 
             if (shouldQueueEmails()) {
                 return enqueueEmail($GLOBALS['pdo'], $email, $firstName, $mail->Subject, $mail->Body, $mail->AltBody);
@@ -178,9 +186,12 @@ if (class_exists('PHPMailer\\PHPMailer\\PHPMailer')) {
             $subject = 'Your ' . SITE_NAME . ' Instructor Account';
             $body = '<p>Hello ' . htmlspecialchars($name) . ',</p>'
                   . '<p>Your account password has been reset by an administrator. Use the credentials below to sign in, then change your password:</p>'
-                  . '<p><strong>Email:</strong> ' . htmlspecialchars($email) . '<br>'
-                  . '<strong>Temporary Password:</strong> ' . htmlspecialchars($password) . '</p>'
-                  . '<p><a href="' . htmlspecialchars(SITE_URL . '/login.php') . '">Login to your account</a></p>';
+                  . '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#f9fafb;margin:12px 0;line-height:1.5;">'
+                  . '<div><strong>Email:</strong> ' . htmlspecialchars($email) . '</div>'
+                  . '<div><strong>Temporary Password:</strong> ' . htmlspecialchars($password) . '</div>'
+                  . '</div>'
+                  . '<p><a href="' . htmlspecialchars(SITE_URL . '/login.php') . '" style="display:inline-block;padding:10px 14px;background:#6a0dad;color:#fff;text-decoration:none;border-radius:6px;">Login to your account</a></p>'
+                  . '<p style="color:#64748b;font-size:12px;">If the button does not work, copy and paste this URL into your browser: ' . htmlspecialchars(SITE_URL . '/login.php') . '</p>';
             $mail->Subject = $subject;
             $mail->Body = renderEmailTemplate($subject, $body);
             $mail->AltBody = strip_tags($body);

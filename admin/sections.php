@@ -5,10 +5,64 @@ requireRole('admin');
 
 $error = '';$msg='';
 
+// Realtime status endpoint
+if (($_GET['action'] ?? '') === 'sections_status') {
+  header('Content-Type: application/json');
+  try {
+    // Instructor names best-effort
+    $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
+    $nameExpr = '';
+    if (in_array('first_name', $ucols, true) && in_array('last_name', $ucols, true)) { $nameExpr = "CONCAT(u.first_name,' ',u.last_name)"; }
+    elseif (in_array('name', $ucols, true)) { $nameExpr = "u.name"; }
+
+    $names = [];
+    if ($nameExpr !== '') {
+      $q = $pdo->query("SELECT ins.section_id, GROUP_CONCAT($nameExpr ORDER BY u.id SEPARATOR ', ') AS names FROM instructor_sections ins INNER JOIN users u ON ins.instructor_id=u.id GROUP BY ins.section_id");
+      foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $r) { $names[(int)$r['section_id']] = (string)($r['names'] ?? ''); }
+    }
+
+    $rows = $pdo->query("SELECT s.id, (SELECT COUNT(*) FROM enrollments e WHERE e.section_id=s.id) AS enrolled_count FROM sections s")->fetchAll(PDO::FETCH_ASSOC);
+    $out = [];
+    foreach ($rows as $r) {
+      $sid = (int)$r['id'];
+      $out[] = [
+        'section_id' => $sid,
+        'enrolled_count' => (int)($r['enrolled_count'] ?? 0),
+        'instructors' => trim($names[$sid] ?? ''),
+      ];
+    }
+    echo json_encode(['ok'=>true,'data'=>$out]);
+  } catch (Exception $e) {
+    echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+  }
+  exit;
+}
+
 // Helpers
 function has_enrollment_section(PDO $pdo): bool {
   try { $cols = $pdo->query("SHOW COLUMNS FROM enrollments")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { return false; }
   return in_array('section_id',$cols,true);
+}
+
+// Action: Rebalance over-capacity courses for Active School Year
+if ($_SERVER['REQUEST_METHOD']==='POST' && (($_POST['action']??'')==='rebalance_overcapacity')){
+  try{
+    $syRow=$pdo->query("SELECT id FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $syId=(int)($syRow['id']??0);
+    if(!$syId) throw new Exception('No active school year.');
+
+    // Courses with enrollments in active SY
+    $courseIds = $pdo->query("SELECT DISTINCT course_id FROM enrollments WHERE school_year_id = " . (int)$syId)->fetchAll(PDO::FETCH_COLUMN);
+    $touched=0; $created=0; $moved=0; $scanned=count($courseIds);
+    foreach ($courseIds as $cid) {
+      $cid=(int)$cid; if($cid<=0) continue;
+      $res = rebalance_sections_for_course($pdo, $cid, $syId, 30);
+      $touched += 1;
+      $created += (int)($res['created_sections']??0);
+      $moved   += (int)($res['moved_enrollments']??0);
+    }
+    $msg = "Rebalanced $touched course(s) (scanned $scanned). Created $created new section(s), moved $moved enrollment(s).";
+  }catch(Exception $e){ $error = $e->getMessage(); }
 }
 
 // Action: bulk for active SY + semester, all programs, years 1..3
@@ -206,6 +260,12 @@ foreach($sections as $s){
         <div class="alert" style="background:#f8fafc; border:1px solid #e5e7eb; color:#334155; margin-bottom:12px;">
           This tool will use the Active School Year and its Semester automatically.
         </div>
+        <!-- Rebalance Over-capacity (Active SY) -->
+        <form method="POST" style="margin-bottom:12px; display:flex; gap:10px; align-items:center;" onsubmit="return confirm('Rebalance all courses with enrollments this Active School Year? This may move students between sections and create new sections to meet capacity.');">
+          <input type="hidden" name="action" value="rebalance_overcapacity">
+          <button class="btn" type="submit">Rebalance Over-capacity — Active SY</button>
+        </form>
+
         <!-- One-click bulk for active SY/Sem -->
         <form method="POST" style="margin-bottom:18px; display:flex; gap:10px; align-items:center;" onsubmit="return confirm('Run for Active School Year and Semester across ALL programs and years 1–3?');">
           <input type="hidden" name="action" value="bulk_active_all">
@@ -281,8 +341,15 @@ foreach($sections as $s){
                         <td><?= htmlspecialchars($s['section_code']) ?></td>
                         <td><?= htmlspecialchars($s['room_code']??'No Room') ?></td>
                         <td class="text-right"><span class="badge badge-secondary"><?= (int)($s['capacity']??0) ?></span></td>
-                        <td><?= (int)($s['enrolled_count']??0) ?></td>
-                        <td><?= '—' ?></td>
+                        <td><span class="sec-enrolled" data-section-id="<?= (int)$s['id'] ?>"><?= (int)($s['enrolled_count']??0) ?></span></td>
+                        <td><span class="sec-instructors" data-section-id="<?= (int)$s['id'] ?>"><?= htmlspecialchars(trim($instructorNamesBySection[(int)$s['id']] ?? '') ?: '—') ?></span></td>
+                        <td>
+                          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <a class="btn" style="padding:4px 8px;" href="../instructor/print_period_grades.php?section_id=<?= (int)$s['id'] ?>&period=prelim" target="_blank">Prelim</a>
+                            <a class="btn" style="padding:4px 8px;" href="../instructor/print_period_grades.php?section_id=<?= (int)$s['id'] ?>&period=midterm" target="_blank">Midterm</a>
+                            <a class="btn" style="padding:4px 8px;" href="../instructor/print_period_grades.php?section_id=<?= (int)$s['id'] ?>&period=finals" target="_blank">Finals</a>
+                          </div>
+                        </td>
                       </tr>
                     <?php endforeach; ?>
                   </tbody>
@@ -331,6 +398,29 @@ foreach($sections as $s){
           if(card) toggleCard(card, btn);
         });
       });
+    });
+  })();
+
+  // Realtime polling for instructors and enrolled counts
+  (function(){
+    function applyStatus(list){
+      list.forEach(function(it){
+        var sid = String(it.section_id);
+        var ec = document.querySelector('.sec-enrolled[data-section-id="'+sid+'"]');
+        if (ec) ec.textContent = String(it.enrolled_count||0);
+        var ins = document.querySelector('.sec-instructors[data-section-id="'+sid+'"]');
+        if (ins) ins.textContent = (it.instructors && it.instructors.trim()) ? it.instructors : '—';
+      });
+    }
+    function tick(){
+      fetch('sections.php?action=sections_status', {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ if(j&&j.ok&&Array.isArray(j.data)) applyStatus(j.data); })
+        .catch(function(){});
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      tick();
+      setInterval(tick, 12000);
     });
   })();
 </script>

@@ -5,11 +5,42 @@
  */
 
 require_once '../config.php';
+require_once __DIR__ . '/../include/functions.php';
 requireRole('instructor');
 
 $instructorId = $_SESSION['user_id'];
 $error = '';
 $msg = '';
+
+// Ensure assessment_criteria schema allows same criteria across sections of the same course
+try {
+    // 1) Add slug column if missing
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD COLUMN slug VARCHAR(190) NULL AFTER name"); } catch (Exception $e) { /* ignore */ }
+    // 2) Backfill slug for any nulls (MySQL8, then PHP fallback)
+    try {
+        $pdo->exec("UPDATE assessment_criteria SET slug = LOWER(TRIM(REGEXP_REPLACE(name, '[^a-z0-9]+', '-'))) WHERE slug IS NULL OR slug = ''");
+    } catch (Exception $e) {
+        try {
+            $st=$pdo->query("SELECT id, name FROM assessment_criteria WHERE slug IS NULL OR slug = ''");
+            $rows=$st?$st->fetchAll(PDO::FETCH_ASSOC):[];
+            foreach($rows as $r){ $nm=strtolower(trim((string)$r['name'])); $slug=preg_replace('/[^a-z0-9]+/i','-',$nm); $slug=trim($slug,'-'); $up=$pdo->prepare("UPDATE assessment_criteria SET slug=? WHERE id=?"); $up->execute([$slug,(int)$r['id']]); }
+        } catch (Exception $ie) { /* ignore */ }
+    }
+    // 3) Make slug NOT NULL (safe)
+    try { $pdo->exec("ALTER TABLE assessment_criteria MODIFY slug VARCHAR(190) NOT NULL"); } catch (Exception $e) { /* ignore */ }
+
+    // 4) Drop any UNIQUE index that is course-scoped (first column course_id)
+    try {
+        $idxStmt = $pdo->query("SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assessment_criteria' AND NON_UNIQUE = 0 GROUP BY INDEX_NAME HAVING MIN(SEQ_IN_INDEX)=1 AND SUM(CASE WHEN COLUMN_NAME='course_id' AND SEQ_IN_INDEX=1 THEN 1 ELSE 0 END)>0");
+        $toDrop = $idxStmt ? $idxStmt->fetchAll(PDO::FETCH_COLUMN) : [];
+        foreach ($toDrop as $ix) { if ($ix && strtolower($ix) !== 'primary') { $pdo->exec("ALTER TABLE assessment_criteria DROP INDEX `".str_replace("`","``",$ix)."`"); } }
+    } catch (Exception $e) { /* ignore */ }
+    // Also try legacy name
+    try { $pdo->exec("ALTER TABLE assessment_criteria DROP INDEX unique_criteria"); } catch (Exception $e) { /* ignore */ }
+
+    // 5) Ensure section-scoped unique exists (use a distinct name to avoid conflict)
+    try { $pdo->exec("ALTER TABLE assessment_criteria ADD UNIQUE KEY uniq_ac_section_period_slug (section_id, period, slug)"); } catch (Exception $e) { /* ignore */ }
+} catch (Exception $e) { /* ignore */ }
 
 // Get sections taught by this instructor
 $sectionsStmt = $pdo->prepare("
@@ -112,16 +143,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     } catch (Exception $e) {
                         $dup = null;
                     }
-                    // If not found, try course_id variant
-                    if (!$dup) {
-                        try {
-                            $dupCrit2 = $pdo->prepare('SELECT id FROM assessment_criteria WHERE course_id = ? AND period = ? AND slug = ? LIMIT 1');
-                            $dupCrit2->execute([$course_id, $period, $slug]);
-                            $dup = $dupCrit2->fetch(PDO::FETCH_ASSOC);
-                        } catch (Exception $e2) {
-                            $dup = null;
-                        }
-                    }
                     // If slug column not present on table, fallback to case-insensitive name under section
                     if (!$dup) {
                         try {
@@ -143,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         } else {
                             // Criteria already exists and has items — reuse instead of erroring
                             $pdo->rollBack();
-                            $msg = 'Criteria already exists for this course and period.';
+                            $msg = 'Criteria already exists for this section and period.';
                             goto after_add_criteria_txn;
                         }
                     }
@@ -179,6 +200,81 @@ after_add_criteria_txn:
                 $error = 'Failed to add criteria: ' . $e->getMessage();
             }
         }
+    }
+}
+
+// Handle copy assessments from another section of the same course
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'copy_from_section') {
+    $source_section_id = (int)($_POST['source_section_id'] ?? 0);
+    $target_section_id = (int)$sectionId;
+    try {
+        if ($target_section_id <= 0 || $source_section_id <= 0) {
+            throw new Exception('Please select a section to copy from.');
+        }
+        // Verify instructor teaches both sections and they are for the same course
+        $secInfoStmt = $pdo->prepare("SELECT s.id, s.course_id FROM instructor_sections ins INNER JOIN sections s ON s.id=ins.section_id WHERE ins.instructor_id=? AND s.id IN (?,?) ORDER BY s.id");
+        $secInfoStmt->execute([$instructorId, $source_section_id, $target_section_id]);
+        $rows = $secInfoStmt->fetchAll(PDO::FETCH_ASSOC);
+        $byId = []; foreach ($rows as $r) { $byId[(int)$r['id']] = (int)$r['course_id']; }
+        if (!isset($byId[$source_section_id]) || !isset($byId[$target_section_id])) {
+            throw new Exception('You are not assigned to one or both sections.');
+        }
+        if ((int)$byId[$source_section_id] !== (int)$byId[$target_section_id]) {
+            throw new Exception('Sections are not for the same course.');
+        }
+
+        // Fetch criteria from source
+        $critStmt = $pdo->prepare("SELECT id, name, period, percentage, COALESCE(slug, LOWER(TRIM(name))) AS slug, COALESCE(effective_percentage, NULL) AS eff FROM assessment_criteria WHERE section_id = ? ORDER BY id");
+        $critStmt->execute([$source_section_id]);
+        $srcCriteria = $critStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (!$srcCriteria) { throw new Exception('Source section has no assessments to copy.'); }
+
+        $pdo->beginTransaction();
+        try {
+            $insertCritWithEff = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, slug, period, percentage, effective_percentage) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            $insertCrit = $pdo->prepare('INSERT INTO assessment_criteria (course_id, section_id, name, slug, period, percentage) VALUES (?, ?, ?, ?, ?, ?)');
+            $findDup = $pdo->prepare('SELECT id FROM assessment_criteria WHERE section_id=? AND period=? AND slug=? LIMIT 1');
+            $itemsByCrit = $pdo->prepare('SELECT name, total_score FROM assessment_items WHERE criteria_id = ? ORDER BY id');
+            $insertItem = $pdo->prepare('INSERT INTO assessment_items (criteria_id, name, total_score) VALUES (?, ?, ?)');
+
+            $newIdByOld = [];
+            foreach ($srcCriteria as $c) {
+                $slug = strtolower(trim((string)$c['slug']));
+                $slug = preg_replace('/[^a-z0-9]+/i','-',$slug);
+                $slug = trim($slug,'-');
+                // Skip if already exists in target (by slug + period)
+                $findDup->execute([$target_section_id, $c['period'], $slug]);
+                $dupId = (int)($findDup->fetchColumn() ?: 0);
+                if ($dupId > 0) { $newIdByOld[(int)$c['id']] = $dupId; continue; }
+
+                // Insert criteria
+                $eff = $c['eff'];
+                $ok = false; $newId = 0;
+                try {
+                    $insertCritWithEff->execute([$byId[$target_section_id], $target_section_id, $c['name'], $slug, $c['period'], $c['percentage'], $eff]);
+                    $newId = (int)$pdo->lastInsertId(); $ok = true;
+                } catch (Exception $e) {
+                    $insertCrit->execute([$byId[$target_section_id], $target_section_id, $c['name'], $slug, $c['period'], $c['percentage']]);
+                    $newId = (int)$pdo->lastInsertId(); $ok = true;
+                }
+                if ($ok && $newId > 0) {
+                    $newIdByOld[(int)$c['id']] = $newId;
+                    // Copy items
+                    $itemsByCrit->execute([(int)$c['id']]);
+                    foreach ($itemsByCrit->fetchAll(PDO::FETCH_ASSOC) as $it) {
+                        $insertItem->execute([$newId, $it['name'], (float)$it['total_score']]);
+                    }
+                }
+            }
+            $pdo->commit();
+            $msg = 'Assessments copied successfully.';
+        } catch (Exception $ie) {
+            $pdo->rollBack();
+            throw $ie;
+        }
+    } catch (Exception $e) {
+        $error = $e->getMessage();
     }
 }
 
@@ -699,6 +795,32 @@ if ($sectionId > 0) {
                     <?php endif; ?>
                 </div>
                 <a href="?" class="btn btn-secondary">Change</a>
+            </div>
+
+            <?php // One-click duplicate assessments UI ?>
+            <div class="card" style="margin-top:10px;">
+                <h3 style="color:#6a0dad; margin:0 0 10px;">Copy Assessments from Another Section</h3>
+                <?php
+                // Build source sections list (same course, taught by instructor), excluding current
+                $srcStmt = $pdo->prepare("SELECT s.id, s.section_code FROM instructor_sections ins INNER JOIN sections s ON s.id=ins.section_id WHERE ins.instructor_id=? AND s.course_id=? AND s.id<>? ORDER BY s.section_code");
+                $srcStmt->execute([$instructorId, (int)$courseId, (int)$sectionId]);
+                $srcSections = $srcStmt->fetchAll(PDO::FETCH_ASSOC);
+                ?>
+                <form method="POST" onsubmit="return confirm('Copy all assessment criteria and items from the selected section into this section? Existing criteria with the same slug and period will be kept.');" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+                    <input type="hidden" name="action" value="copy_from_section">
+                    <div>
+                        <label>From Section</label>
+                        <select name="source_section_id" required>
+                            <option value="">Select source section...</option>
+                            <?php foreach ($srcSections as $ss): ?>
+                                <option value="<?php echo (int)$ss['id']; ?>">Section <?php echo htmlspecialchars($ss['section_code']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <button class="btn btn-primary">Copy from Section</button>
+                    </div>
+                </form>
             </div>
         <?php endif; ?>
 

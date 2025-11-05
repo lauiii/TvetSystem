@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../include/functions.php';
-requireRole('instructor');
+$__role = $_SESSION['role'] ?? '';
+if ($__role !== 'admin') { requireRole('instructor'); }
 
 $instructorId = (int)($_SESSION['user_id'] ?? 0);
 $sectionId = (int)($_GET['section_id'] ?? 0);
@@ -10,30 +11,53 @@ if (!in_array($period, ['prelim','midterm','finals'], true)) { die('Invalid peri
 if ($sectionId <= 0) { die('Invalid section'); }
 
 // Verify access to section
-$secStmt = $pdo->prepare(
-    "SELECT s.*, c.id AS course_id, c.course_code, c.course_name, c.semester, c.year_level, p.name AS program_name, s.section_code
-     FROM sections s
-     INNER JOIN courses c ON s.course_id = c.id
-     LEFT JOIN programs p ON c.program_id = p.id
-     INNER JOIN instructor_sections ins ON s.id = ins.section_id
-     WHERE s.id = ? AND ins.instructor_id = ?"
-);
-$secStmt->execute([$sectionId, $instructorId]);
+$role = $_SESSION['role'] ?? '';
+if ($role === 'admin') {
+    $secStmt = $pdo->prepare(
+        "SELECT s.*, c.id AS course_id, c.course_code, c.course_name, c.semester, c.year_level, p.name AS program_name, s.section_code
+         FROM sections s
+         INNER JOIN courses c ON s.course_id = c.id
+         LEFT JOIN programs p ON c.program_id = p.id
+         WHERE s.id = ?"
+    );
+    $secStmt->execute([$sectionId]);
+} else {
+    $secStmt = $pdo->prepare(
+        "SELECT s.*, c.id AS course_id, c.course_code, c.course_name, c.semester, c.year_level, p.name AS program_name, s.section_code
+         FROM sections s
+         INNER JOIN courses c ON s.course_id = c.id
+         LEFT JOIN programs p ON c.program_id = p.id
+         INNER JOIN instructor_sections ins ON s.id = ins.section_id
+         WHERE s.id = ? AND ins.instructor_id = ?"
+    );
+    $secStmt->execute([$sectionId, $instructorId]);
+}
 $section = $secStmt->fetch(PDO::FETCH_ASSOC);
 if (!$section) { die('Access denied or section not found'); }
 
-// Resolve instructor name
-$instructorName = '';
+// Resolve real-time assigned instructor name(s) for this section
+$instructorNames = '';
 try {
     $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN);
-    if (in_array('first_name', $ucols) && in_array('last_name', $ucols)) {
-        $st = $pdo->prepare("SELECT CONCAT(first_name,' ',last_name) AS nm FROM users WHERE id = ? LIMIT 1");
-        $st->execute([$instructorId]);
-        $instructorName = trim((string)$st->fetchColumn());
-    } elseif (in_array('name', $ucols)) {
-        $st = $pdo->prepare("SELECT name AS nm FROM users WHERE id = ? LIMIT 1");
-        $st->execute([$instructorId]);
-        $instructorName = trim((string)$st->fetchColumn());
+    $nameExpr = '';
+    if (in_array('first_name', $ucols, true) && in_array('last_name', $ucols, true)) { $nameExpr = "CONCAT(u.first_name,' ',u.last_name)"; }
+    elseif (in_array('name', $ucols, true)) { $nameExpr = "u.name"; }
+    if ($nameExpr !== '') {
+        $q = $pdo->prepare("SELECT GROUP_CONCAT($nameExpr ORDER BY u.id SEPARATOR ', ') AS names FROM instructor_sections ins INNER JOIN users u ON ins.instructor_id=u.id WHERE ins.section_id=?");
+        $q->execute([$sectionId]);
+        $instructorNames = trim((string)($q->fetchColumn() ?: ''));
+    }
+    // Fallback to current user if no assignment found
+    if ($instructorNames === '') {
+        if (in_array('first_name', $ucols, true) && in_array('last_name', $ucols, true)) {
+            $st = $pdo->prepare("SELECT CONCAT(first_name,' ',last_name) AS nm FROM users WHERE id = ? LIMIT 1");
+            $st->execute([$instructorId]);
+            $instructorNames = trim((string)$st->fetchColumn());
+        } elseif (in_array('name', $ucols, true)) {
+            $st = $pdo->prepare("SELECT name AS nm FROM users WHERE id = ? LIMIT 1");
+            $st->execute([$instructorId]);
+            $instructorNames = trim((string)$st->fetchColumn());
+        }
     }
 } catch (Exception $e) { /* ignore */ }
 
@@ -148,7 +172,7 @@ $sectionCode = (string)($section['section_code'] ?? '');
     <div class="meta">
         <div><strong>Course:</strong> <?php echo htmlspecialchars($courseLabel); ?></div>
         <div><strong>Section:</strong> <?php echo htmlspecialchars($sectionCode); ?></div>
-        <div><strong>Instructor:</strong> <?php echo htmlspecialchars($instructorName ?: ''); ?></div>
+        <div><strong>Instructor(s):</strong> <?php echo htmlspecialchars($instructorNames ?: ''); ?></div>
     </div>
 
     <?php if ($totalPossible <= 0): ?>

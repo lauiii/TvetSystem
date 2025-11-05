@@ -7,6 +7,28 @@
 require_once '../config.php';
 requireRole('admin');
 
+// AJAX: active term for real-time header
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'active_term') {
+    header('Content-Type: application/json');
+    try {
+        $cols = [];
+        try { $cols = $pdo->query("SHOW COLUMNS FROM school_years")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $cols = []; }
+        $hasActiveSem = in_array('active_semester', $cols, true);
+        $select = $hasActiveSem ? 'id, year, active_semester AS sem' : 'id, year, semester AS sem';
+        $row = $pdo->query("SELECT $select FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $year = $row['year'] ?? null;
+        $sv = strtolower((string)($row['sem'] ?? ''));
+        $label = '';
+        if ($sv==='1' || $sv==='first' || $sv==='1st') { $label='1st Semester'; }
+        elseif ($sv==='2' || $sv==='second' || $sv==='2nd') { $label='2nd Semester'; }
+        elseif ($sv==='3' || $sv==='summer') { $label='Summer'; }
+        echo json_encode(['year'=>$year, 'semester_label'=>$label]);
+    } catch (Exception $e) {
+        echo json_encode(['year'=>null, 'semester_label'=>'']);
+    }
+    exit;
+}
+
 // Fetch dashboard statistics
 $stats = [];
 
@@ -27,32 +49,36 @@ try {
     // ignore
 }
 
-// Active school year
+// Active school year (schema-adaptive) — prefer active_semester if present
 $activeSchoolYear = null;
-$activeSemesterRaw = null;
 $activeSemesterLabel = '';
+$activeSemesterVal = null;
 $activeSyId = 0;
 try {
-    $stmt = $pdo->query("SELECT id, year, semester FROM school_years WHERE status = 'active' LIMIT 1");
-    $rowSY = $stmt->fetch(PDO::FETCH_ASSOC);
+    $cols = [];
+    try { $cols = $pdo->query("SHOW COLUMNS FROM school_years")->fetchAll(PDO::FETCH_COLUMN); } catch (Exception $e) { $cols = []; }
+    $hasActiveSem = in_array('active_semester', $cols, true);
+    $select = $hasActiveSem ? 'id, year, active_semester AS sem' : 'id, year, semester AS sem';
+    $rowSY = $pdo->query("SELECT $select FROM school_years WHERE status='active' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
     if ($rowSY) {
         $activeSyId = (int)($rowSY['id'] ?? 0);
         $activeSchoolYear = $rowSY['year'] ?? null;
-        $activeSemesterRaw = strtolower((string)($rowSY['semester'] ?? ''));
-        if ($activeSemesterRaw==='1' || $activeSemesterRaw==='first' || $activeSemesterRaw==='1st') { $activeSemesterLabel='1st Semester'; }
-        elseif ($activeSemesterRaw==='2' || $activeSemesterRaw==='second' || $activeSemesterRaw==='2nd') { $activeSemesterLabel='2nd Semester'; }
-        elseif ($activeSemesterRaw==='3' || $activeSemesterRaw==='summer') { $activeSemesterLabel='Summer'; }
-        // Fallback: infer from enrollments if empty/0
+        $sv = (string)($rowSY['sem'] ?? '');
+        $svl = strtolower($sv);
+        if ($svl==='1' || $svl==='first' || $svl==='1st') { $activeSemesterLabel='1st Semester'; $activeSemesterVal = 1; }
+        elseif ($svl==='2' || $svl==='second' || $svl==='2nd') { $activeSemesterLabel='2nd Semester'; $activeSemesterVal = 2; }
+        elseif ($svl==='3' || $svl==='summer') { $activeSemesterLabel='Summer'; $activeSemesterVal = 3; }
+        // Fallback: infer from enrollments if label empty
         if ($activeSemesterLabel==='') {
             try {
                 $syIdInf = (int)($pdo->query("SELECT id FROM school_years WHERE status='active' LIMIT 1")->fetchColumn());
                 if ($syIdInf) {
                     $inf = $pdo->prepare("SELECT c.semester, COUNT(*) cnt FROM enrollments e INNER JOIN courses c ON e.course_id=c.id WHERE e.school_year_id=? AND c.semester IS NOT NULL AND c.semester>0 GROUP BY c.semester ORDER BY cnt DESC LIMIT 1");
                     $inf->execute([$syIdInf]);
-                    $sv = (int)($inf->fetchColumn() ?: 0);
-                    if ($sv===1) $activeSemesterLabel='1st Semester';
-                    elseif ($sv===2) $activeSemesterLabel='2nd Semester';
-                    elseif ($sv===3) $activeSemesterLabel='Summer';
+                    $svInf = (int)($inf->fetchColumn() ?: 0);
+                    if ($svInf===1) { $activeSemesterLabel='1st Semester'; $activeSemesterVal=1; }
+                    elseif ($svInf===2) { $activeSemesterLabel='2nd Semester'; $activeSemesterVal=2; }
+                    elseif ($svInf===3) { $activeSemesterLabel='Summer'; $activeSemesterVal=3; }
                 }
             } catch (Exception $e) { /* ignore */ }
             if ($activeSemesterLabel==='') { $activeSemesterLabel='Semester'; }
@@ -318,12 +344,14 @@ try {
             <?php if ($activeSchoolYear): ?>
                 <div class="alert alert-info" style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border: 1px solid #2196f3; border-radius: 5px; display:flex; align-items:center; gap:12px; justify-content:space-between;">
                     <div>
-                        <strong><?php echo htmlspecialchars($activeSchoolYear); ?></strong>
+                        <strong id="active_year"><?php echo htmlspecialchars($activeSchoolYear); ?></strong>
                         <?php if ($activeSemesterLabel!==''): ?>
-                            <span>• <?php echo htmlspecialchars($activeSemesterLabel); ?></span>
+                            <span id="active_sem">• <?php echo htmlspecialchars($activeSemesterLabel); ?></span>
+                        <?php else: ?>
+                            <span id="active_sem"></span>
                         <?php endif; ?>
                     </div>
-                    <button type="button" class="btn" onclick="location.reload()" style="background:#2196f3;color:#fff;">Refresh</button>
+                    <button type="button" class="btn" id="active_refresh_btn" style="background:#2196f3;color:#fff;">Refresh</button>
                 </div>
 
             <!-- Graduates Modal -->
@@ -610,12 +638,30 @@ try {
                   const list = groups[y];
                   if (!list || list.length===0) return `<h3 style="margin-top:14px;">${label}</h3><div style="color:#999;">No students</div>`;
                   const rowsHtml = list.map(s => `<tr><td>${(s.student_id||'')}</td><td>${(s.last_name||'')}, ${(s.first_name||'')}</td><td>${(s.email||'')}</td></tr>`).join('');
-                  return `<h3 style="margin-top:14px;">${label}</h3><div class="table-responsive"><table class="modal-table"><thead><tr><th>Student ID</th><th>Name</th><th>Email</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+                  return `<h3 style=\"margin-top:14px;\">${label}</h3><div class=\"table-responsive\"><table class=\"modal-table\"><thead><tr><th>Student ID</th><th>Name</th><th>Email</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
                 }
                 body.innerHTML = renderGroup(1) + renderGroup(2) + renderGroup(3);
               })
               .catch(()=>{ body.innerHTML = '<p style="color:#999;">Failed to load students.</p>'; });
         }
+
+        // Real-time active term updater
+        (function(){
+          const yr = document.getElementById('active_year');
+          const sm = document.getElementById('active_sem');
+          const btn = document.getElementById('active_refresh_btn');
+          async function refreshTerm(){
+            try {
+              const r = await fetch('dashboard.php?ajax=active_term', {cache:'no-store'});
+              if (!r.ok) return;
+              const j = await r.json();
+              if (j && j.year) { yr.textContent = j.year; }
+              if (j && j.semester_label) { sm.textContent = '• ' + j.semester_label; }
+            } catch (e) { /* silent */ }
+          }
+          if (btn) btn.addEventListener('click', refreshTerm);
+          setInterval(refreshTerm, 30000);
+        })();
 
         // Close modal when clicking outside
         window.onclick = function(event) {

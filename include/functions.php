@@ -341,6 +341,105 @@ function enroll_student_in_section(PDO $pdo, $user_id, $course_id, $school_year_
         return false;
     }
 }
+
+/**
+ * Rebalance enrollments across sections for a course (active SY row id provided).
+ * - Ensures enough sections exist (auto-creates with default capacity when needed)
+ * - Distributes enrollments evenly and updates enrollments.section_id
+ * - Recomputes sections.enrolled_count
+ */
+function rebalance_sections_for_course(PDO $pdo, int $course_id, int $school_year_id, int $defaultCapacity = 30): array {
+    $result = ['created_sections'=>0,'moved_enrollments'=>0,'total_enrollments'=>0];
+
+    // Ensure enrollments has section_id column
+    ensure_unique_enrollments_schema($pdo);
+
+    // Load active sections for course
+    $secStmt = $pdo->prepare("SELECT id, section_code, capacity FROM sections WHERE course_id=? AND status='active' ORDER BY section_code");
+    $secStmt->execute([$course_id]);
+    $sections = $secStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Count total enrollments for this course & school year
+    $enrStmt = $pdo->prepare("SELECT id, student_id, section_id FROM enrollments WHERE course_id=? AND school_year_id = ? ORDER BY id");
+    $enrStmt->execute([$course_id, $school_year_id]);
+    $enrollments = $enrStmt->fetchAll(PDO::FETCH_ASSOC);
+    $total = count($enrollments);
+    $result['total_enrollments'] = $total;
+
+    // Early exit: nothing to do
+    if ($total === 0) {
+        // still recompute counts to be safe
+        try { $pdo->prepare("UPDATE sections SET enrolled_count=(SELECT COUNT(*) FROM enrollments e WHERE e.section_id=sections.id AND e.course_id=? AND e.school_year_id=?) WHERE course_id=?")->execute([$course_id,$school_year_id,$course_id]); } catch (Exception $e) {}
+        return $result;
+    }
+
+    // Determine total capacity and ensure enough sections exist
+    $totalCapacity = 0;
+    foreach ($sections as $s) { $totalCapacity += max(0, (int)$s['capacity']); }
+    if ($totalCapacity < $total) {
+        // need to create more sections
+        $needSeats = $total - $totalCapacity;
+        $toCreate = (int)ceil($needSeats / max(1,$defaultCapacity));
+        // generate next codes (A..Z, AA.. etc.) avoiding duplicates
+        $existCodes = array_map(fn($r)=> (string)$r['section_code'], $sections);
+        $gen = function(array $existing, int $index){ $n=$index; $code=''; while($n>=0){ $code = chr(($n%26)+65).$code; $n=intdiv($n,26)-1; } $base=$index; $k=0; while(in_array($code,$existing,true)){ $k++; $n=$base+$k; $code=''; while($n>=0){ $code=chr(($n%26)+65).$code; $n=intdiv($n,26)-1; } } return $code; };
+        for ($i=0; $i<$toCreate; $i++) {
+            $code = $gen($existCodes, count($existCodes));
+            $ins = $pdo->prepare("INSERT INTO sections (course_id, section_code, section_name, capacity, enrolled_count, status) VALUES (?,?,?,?,0,'active')");
+            $ins->execute([$course_id, $code, $code, $defaultCapacity]);
+            $existCodes[] = $code;
+            $result['created_sections']++;
+        }
+        // reload sections after creation
+        $secStmt->execute([$course_id]);
+        $sections = $secStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // Build capacity slots list
+    $slots = [];
+    foreach ($sections as $s) {
+        $cap = max(0, (int)$s['capacity']);
+        if ($cap <= 0) continue;
+        $slots[] = ['id'=>(int)$s['id'], 'capacity'=>$cap, 'assigned'=>0];
+    }
+    // Sort by section_code order already from query; we will fill round-robin by remaining capacity
+    // Assign enrollments deterministically by enrollment id order
+    $idx = 0; $n = count($slots);
+    if ($n === 0) return $result;
+
+    // Prepare updates
+    $upd = $pdo->prepare("UPDATE enrollments SET section_id=? WHERE id=?");
+
+    foreach ($enrollments as $row) {
+        // find next slot with remaining capacity (simple round-robin pass)
+        $tries = 0;
+        while ($tries < $n && $slots[$idx]['assigned'] >= $slots[$idx]['capacity']) { $idx = ($idx + 1) % $n; $tries++; }
+        if ($slots[$idx]['assigned'] >= $slots[$idx]['capacity']) {
+            // fallback: linear search
+            for ($j=0;$j<$n;$j++){ if($slots[$j]['assigned'] < $slots[$j]['capacity']) { $idx=$j; break; } }
+        }
+        $targetSec = (int)$slots[$idx]['id'];
+        $currentSec = (int)($row['section_id'] ?? 0);
+        if ($currentSec !== $targetSec) {
+            try { $upd->execute([$targetSec, (int)$row['id']]); $result['moved_enrollments']++; } catch (Exception $e) { /* ignore */ }
+        }
+        $slots[$idx]['assigned']++;
+        $idx = ($idx + 1) % $n;
+    }
+
+    // Recompute enrolled_count per section for this course
+    try {
+        $secIds = array_map(fn($s)=>(int)$s['id'], $sections);
+        if ($secIds) {
+            $in = implode(',', array_fill(0, count($secIds), '?'));
+            $q = $pdo->prepare("UPDATE sections s SET s.enrolled_count = (SELECT COUNT(*) FROM enrollments e WHERE e.section_id=s.id AND e.course_id=? AND e.school_year_id=?) WHERE s.id IN ($in)");
+            $params = array_merge([$course_id, $school_year_id], $secIds);
+            $q->execute($params);
+        }
+    } catch (Exception $e) { /* ignore */ }
+
+    return $result;
+}
 /**
  * Helper: get program id by name or code
  */

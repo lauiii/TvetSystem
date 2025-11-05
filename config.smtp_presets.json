@@ -24,5 +24,31 @@
         "EMAIL_MODE": "",
         "SMTP_FORCE_IPV4": 0,
         "SMTP_VERIFY_PEER": 1
+    },
+    "la2": {
+        "SMTP_HOST": "smtp.gmail.com",
+        "SMTP_PORT": 587,
+        "SMTP_USER": "caliparalaurence2@gmail.com",
+        "SMTP_PASS": "jnnr bken opsz wqew",
+        "SMTP_FROM": "caliparalaurence2@gmail.com",
+        "SMTP_FROM_NAME": "Andres Soriano Colleges of Bislig",
+        "SMTP_SECURE": "tls",
+        "SMTP_DEBUG": 0,
+        "EMAIL_MODE": "",
+        "SMTP_FORCE_IPV4": 0,
+        "SMTP_VERIFY_PEER": 1
+    },
+    "pic": {
+        "SMTP_HOST": "smtp.gmail.com",
+        "SMTP_PORT": 587,
+        "SMTP_USER": "picturesdrivedump10@gmail.com",
+        "SMTP_PASS": "dpapccfnkeikadkm",
+        "SMTP_FROM": "picturesdrivedump10@gmail.com",
+        "SMTP_FROM_NAME": "Andres Soriano Colleges of Bislig",
+        "SMTP_SECURE": "tls",
+        "SMTP_DEBUG": 2,
+        "EMAIL_MODE": "",
+        "SMTP_FORCE_IPV4": 0,
+        "SMTP_VERIFY_PEER": 1
     }
 }
