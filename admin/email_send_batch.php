@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Admin: send a small batch of queued credential emails.
  * POST JSON/body: { "limit": 10, "rate_ms": 250 }
@@ -12,7 +13,9 @@ use PHPMailer\PHPMailer\PHPMailer;
 header('Content-Type: application/json; charset=utf-8');
 
 // Ensure outbox exists
-if (function_exists('ensureOutboxSchema')) { ensureOutboxSchema($pdo); }
+if (function_exists('ensureOutboxSchema')) {
+    ensureOutboxSchema($pdo);
+}
 
 $limit = 10;
 $rateMs = 250;
@@ -30,9 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['rate_ms'])) $rateMs = max(0, min(2000, (int)$_POST['rate_ms']));
 }
 
-function msleep($ms) { usleep(max(0, (int)$ms) * 1000); }
+function msleep($ms)
+{
+    usleep(max(0, (int)$ms) * 1000);
+}
 
-$result = [ 'processed' => 0, 'sent' => 0, 'failed' => 0, 'errors' => [] ];
+$result = ['processed' => 0, 'sent' => 0, 'failed' => 0, 'errors' => []];
 
 try {
     // Fetch oldest pending credential emails
@@ -48,22 +54,47 @@ try {
         foreach ($rows as $row) {
             $result['processed']++;
             try {
-                mailerConfiguredOrThrow();
-                $mail = new PHPMailer(true);
-                configureSMTP($mail);
-                $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
-                $mail->addAddress($row['to_email'], $row['to_name'] ?: '');
-                $mail->isHTML(true);
-                $mail->Subject = $row['subject'];
-                $mail->Body = $row['body_html'];
-                if (!empty($row['body_text'])) $mail->AltBody = $row['body_text'];
+                $mailData = [
+                    "to" => $row['to_email'],
+                    "subject" => $row['subject'],
+                    "text" => $row['body_text'] ?? "",
+                    "html" => $row['body_html'],
+                    "fromName" => SMTP_FROM_NAME,
+                    "fromEmail" => SMTP_FROM
+                ];
+
+                // If attachment exists, convert it to correct API format
                 if (!empty($row['attachment_content']) && !empty($row['attachment_name'])) {
-                    $mail->addStringAttachment($row['attachment_content'], $row['attachment_name'], 'base64', $row['attachment_mime'] ?: 'application/octet-stream');
+                    $mailData["attachments"] = [
+                        [
+                            "filename" => $row['attachment_name'],
+                            "content" => $row['attachment_content'], // base64 already from DB
+                            "mimeType" => $row['attachment_mime'] ?: "application/octet-stream"
+                        ]
+                    ];
                 }
-                $mail->send();
-                $upd = $pdo->prepare("UPDATE email_outbox SET status='sent', sent_at=NOW(), updated_at=NOW() WHERE id=?");
-                $upd->execute([$row['id']]);
-                $result['sent']++;
+
+                $ch = curl_init("https://honovel.deno.dev/api/mailer/send");
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($mailData));
+
+                $response = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+
+                if ($httpCode === 200) {
+                    // ✅ Success
+                    $upd = $pdo->prepare("UPDATE email_outbox SET status='sent', sent_at=NOW(), updated_at=NOW() WHERE id=?");
+                    $upd->execute([$row['id']]);
+                    $result['sent']++;
+                } else {
+                    // ❌ Failed
+                    $upd = $pdo->prepare("UPDATE email_outbox SET status='failed', updated_at=NOW() WHERE id=?");
+                    $upd->execute([$row['id']]);
+                    $result['failed']++;
+                }
             } catch (Exception $e) {
                 $attempts = (int)$row['attempts'] + 1;
                 $delayMin = min(60, 1 << min(10, $attempts));
@@ -74,7 +105,7 @@ try {
                     $pdo->prepare("UPDATE email_outbox SET status='failed', updated_at=NOW() WHERE id=?")->execute([$row['id']]);
                 }
                 $result['failed']++;
-                $result['errors'][] = [ 'id' => (int)$row['id'], 'error' => ($mail->ErrorInfo ?? $e->getMessage()) ];
+                $result['errors'][] = ['id' => (int)$row['id'], 'error' => ($mail->ErrorInfo ?? $e->getMessage())];
             }
             if ($rateMs > 0) msleep($rateMs);
         }
